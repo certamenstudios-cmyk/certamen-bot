@@ -24,6 +24,14 @@ const client = new Client({
     ]
 });
 
+// ============================================
+//         STUDIO CONFIGURATION CORE
+// ============================================
+const CONFIG = {
+    HIRED_CHANNEL_ID: '1508153883669827757',
+    NOT_HIRED_CHANNEL_ID: '1508153941521858680'
+};
+
 const COLORS = {
     neutral: '#2c2f33',
     success: '#43b581',
@@ -33,7 +41,7 @@ const COLORS = {
 };
 
 // ============================================
-//   THE ULTIMATE COMMAND ENGINE REGISTRATION
+//         COMMAND REGISTRATION ENGINE
 // ============================================
 
 const commands = [
@@ -42,6 +50,18 @@ const commands = [
         .setDescription('Send a polished HR welcome introduction to an applicant')
         .addUserOption(option => 
             option.setName('applicant').setDescription('The candidate you are greeting').setRequired(true)
+        ),
+    new SlashCommandBuilder()
+        .setName('onboard')
+        .setDescription('Send portfolio feedback and portal onboarding instructions')
+        .addUserOption(option =>
+            option.setName('applicant').setDescription('The candidate moving to the next stage').setRequired(true)
+        ),
+    new SlashCommandBuilder()
+        .setName('process')
+        .setDescription('Notify the candidate that their files are being processed and request background checks')
+        .addUserOption(option =>
+            option.setName('applicant').setDescription('The candidate whose file is compiling').setRequired(true)
         ),
     new SlashCommandBuilder()
         .setName('dm')
@@ -68,7 +88,6 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 client.once('ready', async () => {
     console.log(`✨ ${client.user.tag} Ultimate HR Console is fully active.`);
     try {
-        // This completely flushes and overrides old command data to fix the broken /dm bug!
         console.log('🔄 Refreshing clean slash command structures...');
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
         console.log('✅ Commands successfully deployed and synced globally.');
@@ -78,7 +97,7 @@ client.once('ready', async () => {
 });
 
 // ============================================
-//         INTERFACE RENDER ENGINE
+//         INTERFACE RENDER MODULES
 // ============================================
 
 function renderDecisionPanel(user, role) {
@@ -111,7 +130,6 @@ function getDecisionComponents(userId) {
 
 client.on('interactionCreate', async interaction => {
     
-    // --- SLASH COMMANDS HANDLER ---
     if (interaction.isChatInputCommand()) {
         
         if (interaction.commandName === 'intro') {
@@ -125,6 +143,53 @@ client.on('interactionCreate', async interaction => {
                 .setTimestamp();
 
             return interaction.reply({ embeds: [introEmbed] });
+        }
+
+        if (interaction.commandName === 'onboard') {
+            const applicant = interaction.options.getUser('applicant');
+
+            const onboardEmbed = new EmbedBuilder()
+                .setColor(COLORS.success)
+                .setAuthor({ name: 'Certamen Studios — Recruitment Portal', iconURL: client.user.displayAvatarURL() })
+                .setTitle('🚀 Portfolio Approved — Next Steps')
+                .setDescription(`Hello ${applicant},\n\nThat portfolio was incredibly impressive! We would love to move you forward to the **knowledge evaluation phase** of our application pipeline.\n\nPlease follow the onboarding sequence below to set up your profile:`)
+                .addFields(
+                    { 
+                        name: '📋 Onboarding Protocol', 
+                        value: '1️⃣ Head over to our [Certamen Onboarding Portal](https://emersondhaba.my.canva.site/certamen)\n2️⃣ Locate the **Sign Up** section, fill in your profile details, and apply as an **Applicant**.\n3️⃣ **Log In** to your newly established account.\n4️⃣ Complete the **Welcome Survey** to activate your testing module.' 
+                    }
+                )
+                .setTimestamp()
+                .setFooter({ text: 'Certamen Studios Evaluation Phase' });
+
+            const linkButton = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setLabel('Open Onboarding Website')
+                    .setURL('https://emersondhaba.my.canva.site/certamen')
+                    .setStyle(ButtonStyle.Link)
+            );
+
+            return interaction.reply({ content: `${applicant}`, embeds: [onboardEmbed], components: [linkButton] });
+        }
+
+        if (interaction.commandName === 'process') {
+            const applicant = interaction.options.getUser('applicant');
+
+            const processEmbed = new EmbedBuilder()
+                .setColor(COLORS.warning)
+                .setAuthor({ name: 'Certamen Studios — Core Processing Systems', iconURL: client.user.displayAvatarURL() })
+                .setTitle('📁 Transmission Logged & Filed')
+                .setDescription(`Thank you, ${applicant}. Your survey answers have been compiled cleanly and routed directly to our **Filing Department**.`)
+                .addFields(
+                    {
+                        name: '⚙️ Background Verification Operations',
+                        value: 'Your comprehensive application performance report is currently being auto-generated by our background core systems. \n\nWhile our administration logs finalize your file updates, **can we proceed with some baseline background checks?**'
+                    }
+                )
+                .setTimestamp()
+                .setFooter({ text: 'Certamen Studios Security Clearance' });
+
+            return interaction.reply({ content: `${applicant}`, embeds: [processEmbed] });
         }
 
         if (interaction.commandName === 'dm') {
@@ -161,6 +226,7 @@ client.on('interactionCreate', async interaction => {
     // --- INTERACTIVE BUTTON HANDLER ---
     if (interaction.isButton()) {
         const [action, targetId] = interaction.customId.split('_');
+        if (action === 'link') return; 
         
         let targetUser;
         try {
@@ -169,7 +235,6 @@ client.on('interactionCreate', async interaction => {
             return interaction.reply({ content: '❌ **Error:** Unable to track target user context data securely through Discord.', ephemeral: true });
         }
 
-        // Grab current data from the message embed safely
         const embed = interaction.message.embeds[0];
         const roleField = embed.fields.find(f => f.name === '🛠️ Target Designation');
         const role = roleField ? roleField.value.replace(/`/g, '') : 'UNKNOWN';
@@ -177,7 +242,6 @@ client.on('interactionCreate', async interaction => {
         const notesField = embed.fields.find(f => f.name === '📌 Interview Performance Evaluation Record');
         const finalNotes = notesField ? notesField.value : '*No notes provided.*';
 
-        // 1. OPEN NOTES SCRATCHPAD MODAL
         if (action === 'note') {
             const modal = new ModalBuilder()
                 .setCustomId(`modal_${targetId}`)
@@ -195,11 +259,7 @@ client.on('interactionCreate', async interaction => {
             return interaction.showModal(modal);
         }
 
-        // 2. ACCEPT / HIRE PIPELINE
         if (action === 'accept') {
-            const hiredChannelId = process.env.HIRED_CHANNEL_ID;
-            if (!hiredChannelId) return interaction.reply({ content: '❌ Setup Error: HIRED_CHANNEL_ID missing in system configs.', ephemeral: true });
-
             await interaction.reply({ content: `⚙️ Logging permanent hire parameters for **${targetUser.displayName}**...`, ephemeral: true });
 
             const offerEmbed = new EmbedBuilder()
@@ -213,7 +273,7 @@ client.on('interactionCreate', async interaction => {
             try { await targetUser.send({ embeds: [offerEmbed] }); } catch { dmAudit = "⚠️ DM Locked."; }
 
             try {
-                const logsChan = await client.channels.fetch(hiredChannelId);
+                const logsChan = await client.channels.fetch(CONFIG.HIRED_CHANNEL_ID);
                 const auditRecord = new EmbedBuilder()
                     .setColor(COLORS.success)
                     .setTitle('🟢 New Talent Recruited')
@@ -228,17 +288,14 @@ client.on('interactionCreate', async interaction => {
 
                 await logsChan.send({ embeds: [auditRecord] });
                 await interaction.message.delete().catch(() => {});
-                return interaction.editReply({ content: `✅ **Success:** Talent hired successfully. Logs sent.\n📦 **DM Status:** ${dmAudit}` });
+                return interaction.editReply({ content: `✅ **Success:** Talent hired successfully. Logs sent to <#${CONFIG.HIRED_CHANNEL_ID}>.\n📦 **DM Status:** ${dmAudit}` });
             } catch (err) {
-                return interaction.editReply({ content: '❌ Database Core Failure: Could not post to logging feed.' });
+                console.error(err);
+                return interaction.editReply({ content: '❌ Database Core Failure: Could not find or post to the Hired logging channel.' });
             }
         }
 
-        // 3. REJECT / FILE ARCHIVE PIPELINE
         if (action === 'reject') {
-            const notHiredChannelId = process.env.NOT_HIRED_CHANNEL_ID;
-            if (!notHiredChannelId) return interaction.reply({ content: '❌ Setup Error: NOT_HIRED_CHANNEL_ID missing in system configs.', ephemeral: true });
-
             await interaction.reply({ content: `⚙️ Archiving candidate record parameters for **${targetUser.displayName}**...`, ephemeral: true });
 
             const rejectEmbed = new EmbedBuilder()
@@ -252,7 +309,7 @@ client.on('interactionCreate', async interaction => {
             try { await targetUser.send({ embeds: [rejectEmbed] }); } catch { dmAudit = "⚠️ DM Locked."; }
 
             try {
-                const logsChan = await client.channels.fetch(notHiredChannelId);
+                const logsChan = await client.channels.fetch(CONFIG.NOT_HIRED_CHANNEL_ID);
                 const auditRecord = new EmbedBuilder()
                     .setColor(COLORS.danger)
                     .setTitle('🔴 Application Record Archived')
@@ -267,9 +324,10 @@ client.on('interactionCreate', async interaction => {
 
                 await logsChan.send({ embeds: [auditRecord] });
                 await interaction.message.delete().catch(() => {});
-                return interaction.editReply({ content: `❌ **File Deactivated:** Record sent to archives.\n📦 **DM Status:** ${dmAudit}` });
+                return interaction.editReply({ content: `❌ **File Deactivated:** Record sent to archives in <#${CONFIG.NOT_HIRED_CHANNEL_ID}>.\n📦 **DM Status:** ${dmAudit}` });
             } catch (err) {
-                return interaction.editReply({ content: '❌ Database Core Failure: Could not post archive logs.' });
+                console.error(err);
+                return interaction.editReply({ content: '❌ Database Core Failure: Could not find or post to the Not Hired archiving channel.' });
             }
         }
     }
