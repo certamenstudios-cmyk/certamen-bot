@@ -54,7 +54,7 @@ const SYSTEM_CACHE = {
     acceptedCount: 0,
     rejectedCount: 0,
     userNotes: {},
-    pendingReports: {} // Temp cache to store global report authorization parameters
+    pendingReports: {} // Core temporary tracking memory cache
 };
 
 // ============================================
@@ -98,10 +98,10 @@ const commands = [
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 client.once('ready', async () => {
-    console.log(`✨ ${client.user.tag} Ultimate Private HR Operations Console is live.`);
+    console.log(`✨ ${client.user.tag} Live-Counter Engine is live.`);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Advanced private command interfaces synced successfully.');
+        console.log('✅ Advanced live interfaces synced successfully.');
     } catch (error) {
         console.error('❌ Sync failed:', error);
     }
@@ -247,7 +247,7 @@ client.on('interactionCreate', async interaction => {
     const [action, targetId, role] = interaction.customId.split('_');
     if (action !== 'prehire' && action !== 'predeny') return;
 
-    // Build the Report Filing Modal Interface
+    // Report Filing Modal Interface
     const modal = new ModalBuilder()
         .setCustomId(`reportmodal_${action}_${targetId}_${role}`)
         .setTitle('📋 File Performance Evaluation Report');
@@ -285,7 +285,7 @@ client.on('interactionCreate', async interaction => {
         const performance = interaction.fields.getTextInputValue('report_performance');
         const justification = interaction.fields.getTextInputValue('report_justification');
 
-        // Store report variables temporarily in system memory using the channel ID as the unique document key
+        // Store variables temporarily in structural system data memory cache map arrays
         SYSTEM_CACHE.pendingReports[interaction.channel.id] = {
             action: action === 'prehire' ? 'HIRE' : 'DENY',
             targetId,
@@ -296,24 +296,24 @@ client.on('interactionCreate', async interaction => {
             channel: interaction.channel
         };
 
-        // Prompt interviewer to select other staff members to send the report to via DM
+        // Select managers/co-signers
         const shareEmbed = new EmbedBuilder()
             .setColor(COLORS.warning)
-            .setTitle('📝 Report Compiled Successfully!')
-            .setDescription('Select the managers/co-signers below. The evaluation file will be dispatched **directly to their DMs** for private review and signature processing.');
+            .setTitle('📝 Select Co-Signers')
+            .setDescription('Choose the managers who need to authorize this decision file. The report text layout profile will be routed **directly to their DMs** privately.');
 
         const userSelect = new UserSelectMenuBuilder()
             .setCustomId(`cosignselect_${interaction.channel.id}`)
-            .setPlaceholder('Choose the staff members to receive this report DM...')
+            .setPlaceholder('Choose the managers to receive authorization logs...')
             .setMinValues(1)
-            .setMaxValues(5); // Adjust max to allow more people if needed
+            .setMaxValues(5);
 
         const row = new ActionRowBuilder().addComponents(userSelect);
         await interaction.editReply({ embeds: [shareEmbed], components: [row] });
     }
 });
 
-// Handle Selection of Staff Reviewers & Dispatch DMs
+// Handle Selection of Staff Reviewers, Dispatch DMs, & Create Live Dashboard Counter
 client.on('interactionCreate', async interaction => {
     if (!interaction.isUserSelectMenu()) return;
 
@@ -328,62 +328,69 @@ client.on('interactionCreate', async interaction => {
         let targetUser;
         try { targetUser = await client.users.fetch(reportData.targetId); } catch { return; }
 
-        // Build the master formal document embed
-        const documentEmbed = new EmbedBuilder()
-            .setColor(reportData.action === 'HIRE' ? COLORS.success : COLORS.danger)
-            .setTitle(`📑 HR EVALUATION DOCUMENT: ${targetUser.username}`)
-            .setDescription(`**Proposed Executive Action:** \`${reportData.action} & CLOSE\`\n**Target Position:** \`${reportData.role.toUpperCase()}\``)
-            .addFields(
-                { name: '👤 Primary Interviewer', value: `${reportData.interviewer}`, inline: true },
-                { name: '📅 Date Compiled', value: `\`${new Date().toLocaleDateString()}\``, inline: true },
-                { name: '📊 Candidate Performance Summary', value: reportData.performance },
-                { name: '⚖️ Action Justification', value: reportData.justification },
-                { name: '🔒 Required Signatures', value: selectedStaff.map(u => `⏳ Pending DM Sign-off: ${u}`).join('\n') }
-            )
-            .setFooter({ text: 'Certamen Studios Dual-Authorization Private Protocol' });
-
-        // Setup authorization trackers in internal data cache
+        // Setup tracking arrays inside system data parameters
         reportData.pendingSignatures = selectedStaff.map(u => u.id);
         reportData.signedBy = [];
-        reportData.documentEmbed = documentEmbed;
+        reportData.totalRequiredSignatures = selectedStaff.size;
+
+        // Build the standalone Evaluation Embed to send to the managers' DMs
+        const dmDocumentEmbed = new EmbedBuilder()
+            .setColor(reportData.action === 'HIRE' ? COLORS.success : COLORS.danger)
+            .setTitle(`📑 HR EVALUATION REQUEST: ${targetUser.username}`)
+            .setDescription(`**Interviewer:** ${reportData.interviewer}\n**Proposed Action:** \`${reportData.action} & CLOSE\`\n**Designation:** \`${reportData.role.toUpperCase()}\``)
+            .addFields(
+                { name: '📊 Candidate Performance Summary', value: reportData.performance },
+                { name: '⚖️ Action Justification', value: reportData.justification }
+            )
+            .setFooter({ text: 'Certamen Studios Secure DM Routing System' });
 
         let successfullySentCount = 0;
 
-        // Loop and dispatch separate, personalized private DMs to every single manager chosen
+        // Dispatch individual DM files to each selected manager account profile
         for (const [_, staffUser] of selectedStaff) {
             try {
-                const dmEmbed = EmbedBuilder.from(documentEmbed)
-                    .setDescription(`**Attention Manager:** You have been requested by ${reportData.interviewer} to co-sign an application file.\n\n**Proposed Executive Action:** \`${reportData.action} & CLOSE\`\n**Target Position:** \`${reportData.role.toUpperCase()}\``);
-
                 const signButton = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
                         .setCustomId(`pvtsign_${threadId}_${staffUser.id}`)
-                        .setLabel('Approve & Sign Document')
+                        .setLabel('Approve & Sign File')
                         .setStyle(ButtonStyle.Success)
                         .setEmoji('🖋️')
                 );
 
-                await staffUser.send({ embeds: [dmEmbed], components: [signButton] });
+                await staffUser.send({ embeds: [dmDocumentEmbed], components: [signButton] });
                 successfullySentCount++;
             } catch (err) {
-                // If their DMs are locked, log a fallback error inside the workspace channel
-                await reportData.channel.send({ content: `⚠️ **Transmission Error:** Could not deliver report packet to ${staffUser}. They must unlock their personal Direct Messages.` });
-                // Filter them out of required signature arrays so the file doesn't freeze permanently
+                await reportData.channel.send({ content: `⚠️ **Transmission Dropped:** Could not DM report to ${staffUser}. (DMs Blocked)` });
                 reportData.pendingSignatures = reportData.pendingSignatures.filter(id => id !== staffUser.id);
+                reportData.totalRequiredSignatures--;
             }
         }
 
-        // Update the workspace channel interaction prompt confirming dispatching actions
-        if (reportData.pendingSignatures.length === 0) {
-            await interaction.editReply({ content: '❌ **Operation Cancelled:** None of the chosen staff members could receive DMs.', embeds: [], components: [] });
+        if (reportData.totalRequiredSignatures === 0) {
+            await interaction.editReply({ content: '❌ **Operation Terminated:** None of the chosen co-signers were reachable via DM.', embeds: [], components: [] });
             delete SYSTEM_CACHE.pendingReports[threadId];
-        } else {
-            await interaction.editReply({ content: `📨 **Private Transmission Dispatched:** The report file has been sent straight to the DMs of **${successfullySentCount}** staff members for verification processing.`, embeds: [], components: [] });
+            return;
         }
+
+        // Create the Live Tracking Dashboard Frame for the room thread workspace
+        const counterDashboardEmbed = new EmbedBuilder()
+            .setColor(COLORS.warning)
+            .setTitle('⏳ Authorization Pipeline Active')
+            .setDescription(`The evaluation file has been dispatched to private manager DMs.\n\n### 📊 Live Signatures Status:\n\`🔄 0 / ${reportData.totalRequiredSignatures} Approved\``)
+            .addFields({
+                name: '🔒 Awaiting Signatures From:',
+                value: reportData.pendingSignatures.map(id => `⏳ <@${id}>`).join('\n')
+            });
+
+        // Publish live dashboard counter, completely erasing the menu selection interface frame
+        const dashboardMsg = await reportData.channel.send({ embeds: [counterDashboardEmbed] });
+        reportData.dashboardMessage = dashboardMsg;
+
+        await interaction.editReply({ content: '📨 **Private authorization workflow initiated.** Tracker is live below.', embeds: [], components: [] });
     }
 });
 
-// Handle Private DM Signature Submissions
+// Handle Private DM Signature Submissions & Update Live Counters
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
@@ -392,47 +399,48 @@ client.on('interactionCreate', async interaction => {
 
         const reportData = SYSTEM_CACHE.pendingReports[threadId];
         if (!reportData) {
-            return interaction.reply({ content: '❌ **Expired Session:** This evaluation file has already been finalized or closed by another administrator.', ephemeral: true });
+            return interaction.reply({ content: '❌ **Expired:** This authorization block tracking frame has already been processed or finalized.', ephemeral: true });
         }
 
-        // Security validation check
-        if (interaction.user.id !== assignedStaffId) {
-            return interaction.reply({ content: '⚠️ Unauthorized payload action.', ephemeral: true });
-        }
+        if (interaction.user.id !== assignedStaffId) return;
 
         await interaction.deferUpdate();
 
         reportData.signedBy.push(interaction.user.id);
         reportData.pendingSignatures = reportData.pendingSignatures.filter(id => id !== interaction.user.id);
 
-        // Edit the individual user's DM component frame layout to turn off their active button
-        await interaction.editReply({ content: '✅ **Thank you.** Your digital signature has been recorded and stamped into the central file.', components: [] });
+        // Turn off button inside the individual manager's DM frame window room
+        await interaction.editReply({ content: '✅ **Signature Logged.** Your approval stamp has been added to the master file.', components: [] });
 
-        // Update signature field on the master embed card document
-        const updatedFields = reportData.documentEmbed.data.fields.map(f => {
-            if (f.name === '🔒 Required Signatures') {
-                const signedLines = reportData.signedBy.map(id => `✅ Signed: <@${id}>`);
-                const pendingLines = reportData.pendingSignatures.map(id => `⏳ Pending DM Sign-off: <@${id}>`);
-                return { name: '🔒 Required Signatures', value: [...signedLines, ...pendingLines].join('\n') };
-            }
-            return f;
-        });
+        // Build and update the dynamic Live Tracking Counter Dashboard block frame inside the thread room workspace
+        const currentCount = reportData.signedBy.length;
+        const totalCount = reportData.totalRequiredSignatures;
+        const isFinished = reportData.pendingSignatures.length === 0;
 
-        reportData.documentEmbed.setFields(updatedFields);
+        const updatedCounterEmbed = new EmbedBuilder()
+            .setColor(isFinished ? COLORS.success : COLORS.warning)
+            .setTitle(isFinished ? '✅ Pipeline Clearance Approved' : '⏳ Authorization Pipeline Active')
+            .setDescription(`The evaluation file has been dispatched to private manager DMs.\n\n### 📊 Live Signatures Status:\n\`${isFinished ? '🟢' : '🔄'} ${currentCount} / ${totalCount} Approved\``);
 
-        // Update the main operational workspace thread so the reviewer can track the signing status live
-        await reportData.channel.send({ content: `🖋️ **Signature Update:** <@${interaction.user.id}> has verified and co-signed the document via DM.` });
+        if (!isFinished) {
+            const signedList = reportData.signedBy.map(id => `✅ <@${id}>`);
+            const pendingList = reportData.pendingSignatures.map(id => `⏳ <@${id}>`);
+            updatedCounterEmbed.addFields({ name: '🔒 Authorization List Accounts:', value: [...signedList, ...pendingList].join('\n') });
+        } else {
+            updatedCounterEmbed.addFields({ name: '🔒 Authorization List Accounts:', value: reportData.signedBy.map(id => `✅ <@${id}>`).join('\n') });
+        }
 
-        // Check if all pending DM signature requests are completed
-        if (reportData.pendingSignatures.length === 0) {
+        if (reportData.dashboardMessage) {
+            await reportData.dashboardMessage.edit({ embeds: [updatedCounterEmbed] }).catch(() => null);
+        }
+
+        // Trigger execution pipeline code block layout once the signature counter balances out 100%
+        if (isFinished) {
             let targetUser;
             try { targetUser = await client.users.fetch(reportData.targetId); } catch { return; }
 
             if (SYSTEM_CACHE.activeInterviews > 0) SYSTEM_CACHE.activeInterviews--;
 
-            reportData.documentEmbed.addFields({ name: '⚡ Executive Status', value: `🏁 **AUTHORIZED VIA PRIVATE CONSENSUS** by absolute majority vote.` });
-
-            // Send decision to candidate and post report to logs
             if (reportData.action === 'HIRE') {
                 SYSTEM_CACHE.acceptedCount++;
                 const offerEmbed = new EmbedBuilder()
@@ -442,10 +450,19 @@ client.on('interactionCreate', async interaction => {
 
                 try { await targetUser.send({ embeds: [offerEmbed] }); } catch {}
 
+                // Send the ORIGINAL clean hired audit frame logs back to normal logs channel configuration settings
                 const logsChan = await client.channels.fetch(CONFIG.HIRED_CHANNEL_ID).catch(() => null);
-                if (logsChan) await logsChan.send({ embeds: [reportData.documentEmbed] });
-                
-                await reportData.channel.send({ content: '🏁 **All private DM approvals cleared. Candidate hired successfully.** Archiving room...' });
+                if (logsChan) {
+                    const cleanAudit = new EmbedBuilder()
+                        .setColor(COLORS.success)
+                        .setTitle('🟢 New Talent Recruited')
+                        .addFields(
+                            { name: '👤 Employee', value: `${targetUser}`, inline: true },
+                            { name: '🛠️ Assigned Designation', value: `\`${reportData.role.toUpperCase()}\``, inline: true }
+                        );
+                    await logsChan.send({ embeds: [cleanAudit] });
+                }
+                await reportData.channel.send({ content: '🏁 **Pipeline 100% approved. Candidate successfully registered into HR logs.** Archiving...' });
                 await reportData.channel.setName(`[HIRED] ${targetUser.username}`);
             } else {
                 SYSTEM_CACHE.rejectedCount++;
@@ -456,14 +473,22 @@ client.on('interactionCreate', async interaction => {
 
                 try { await targetUser.send({ embeds: [rejectEmbed] }); } catch {}
 
+                // Send the ORIGINAL clean denied audit frame logs back to normal logs channel configuration settings
                 const logsChan = await client.channels.fetch(CONFIG.NOT_HIRED_CHANNEL_ID).catch(() => null);
-                if (logsChan) await logsChan.send({ embeds: [reportData.documentEmbed] });
-
-                await reportData.channel.send({ content: '🏁 **All private DM checks processed. Candidate denied.** Archiving room...' });
+                if (logsChan) {
+                    const cleanAudit = new EmbedBuilder()
+                        .setColor(COLORS.danger)
+                        .setTitle('🔴 Application Record Archived')
+                        .addFields(
+                            { name: '👤 Candidate', value: `${targetUser}`, inline: true },
+                            { name: '🛠️ Attempted Designation', value: `\`${reportData.role.toUpperCase()}\``, inline: true }
+                        );
+                    await logsChan.send({ embeds: [cleanAudit] });
+                }
+                await reportData.channel.send({ content: '🏁 **Pipeline processed. Candidate file rejected.** Archiving...' });
                 await reportData.channel.setName(`[DENIED] ${targetUser.username}`);
             }
 
-            // Close down and archive thread completely
             await reportData.channel.setArchived(true);
             delete SYSTEM_CACHE.pendingReports[threadId];
         }
@@ -502,7 +527,6 @@ client.on('messageCreate', async message => {
     }
 
     if (message.channel.type === ChannelType.DM) {
-        // If it's a DM, make sure it's an applicant message and not someone trying to sign a report
         const forumChannel = await client.channels.fetch(CONFIG.FORUM_CHANNEL_ID).catch(() => null);
         if (!forumChannel) return;
 
