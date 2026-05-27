@@ -20,14 +20,12 @@ const client = new Client({
 // SLASH COMMANDS SETUP
 // =======================
 
-const commands = [
+const commandBuilders = [
     new SlashCommandBuilder().setName('intro').setDescription('HR introduction'),
     new SlashCommandBuilder().setName('report').setDescription('Send filing report'),
     new SlashCommandBuilder().setName('vc').setDescription('VC policy message'),
     new SlashCommandBuilder().setName('interview').setDescription('Start interview panel'),
-    new SlashCommandBuilder()
-        .setName('dm')
-        .setDescription('DM a user (HR only)')
+    new SlashCommandBuilder().setName('dm').setDescription('DM a user (HR only)')
         .addUserOption(option =>
             option.setName('user').setDescription('User').setRequired(true)
         )
@@ -35,6 +33,8 @@ const commands = [
             option.setName('message').setDescription('Message').setRequired(true)
         )
 ];
+
+const commands = commandBuilders.map(cmd => cmd.toJSON());
 
 // Register commands
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
