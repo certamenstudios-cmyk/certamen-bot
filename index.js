@@ -45,7 +45,8 @@ const COLORS = {
     success: '#43b581',
     danger: '#f04747',
     warning: '#faa61a',
-    info: '#7289da'
+    info: '#7289da',
+    purple: '#9b59b6' 
 };
 
 const SYSTEM_CACHE = {
@@ -53,11 +54,11 @@ const SYSTEM_CACHE = {
     activeInterviews: 0,
     acceptedCount: 0,
     rejectedCount: 0,
-    userNotes: {},
-    pendingHires: {} 
+    pendingHires: {},
+    aiModeActive: {},    
+    activeDrafts: {}     
 };
 
-// Helper utility function to auto-generate a random 4-character small job code
 function generateSmallJobCode() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let code = '';
@@ -67,51 +68,58 @@ function generateSmallJobCode() {
     return code;
 }
 
+function generateAIResponseToUser(applicantMessage, roleType) {
+    const roleName = roleType ? roleType.toUpperCase() : "DEVELOPER";
+    const text = applicantMessage.toLowerCase();
+    
+    if (text.includes('hello') || text.includes('hi') || text.includes('hey')) {
+        return `Hello! Welcome to your interview session. We are reviewing candidates for the **${roleName}** position at Certamen Studios. To get things started, could you share a bit about your background and some of your favorite projects you've worked on?`;
+    }
+    if (text.includes('portfolio') || text.includes('work') || text.includes('showcase') || text.includes('link')) {
+        return `Thanks for providing that context! Your portfolio layout looks highly impressive. In this **${roleName}** role, we focus heavily on clean asset organization and teamwork. Can you tell me about a time you had to adapt your style to fit a specific group project requirement?`;
+    }
+    if (text.includes('pay') || text.includes('robux') || text.includes('salary') || text.includes('earn')) {
+        return `Great question. Regarding compensation: all project milestone structures, rates, and payouts are finalized right after passing this interview stage. If you're brought onto the team, a manager will set up your official payment file. Do you have any other questions about our studio environment or team pipelines?`;
+    }
+    if (text.includes('what do i') || text.includes('how do i') || text.includes('next step')) {
+        return `The next step is simple! We're evaluating your core skills for **${roleName}**. Could you describe your general availability throughout the week and how you usually manage tight deadlines?`;
+    }
+    
+    return `Thank you for sharing that with us! That makes complete sense. Given our high design standards for **${roleName}** assets, how do you approach testing your work to make sure it's fully optimized and bug-free before submitting it?`;
+}
+
 // ============================================
 //         COMMAND REGISTRATION ENGINE
 // ============================================
-
 const commands = [
     new SlashCommandBuilder()
         .setName('interview')
-        .setDescription('Open a live-chat forum thread bridge for an applicant using choice elements')
-        .addUserOption(option => 
-            option.setName('candidate').setDescription('Select the target candidate from the server list').setRequired(true)
-        ),
+        .setDescription('Open a live-chat forum thread bridge for an applicant')
+        .addUserOption(option => option.setName('candidate').setDescription('Select target applicant').setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('aiassist')
+        .setDescription('Toggle the AI Writing Copilot draft mode ON or OFF for this workspace channel'),
     new SlashCommandBuilder()
         .setName('dashboard')
         .setDescription('View the live deployment metrics dashboard for HR operations'),
     new SlashCommandBuilder()
-        .setName('notes')
-        .setDescription('Manage operational internal profile files or notes for a user')
-        .addSubcommand(sub =>
-            sub.setName('add')
-               .setDescription('Append a new assessment note to a candidate file')
-               .addUserOption(opt => opt.setName('target').setDescription('The candidate').setRequired(true))
-               .addStringOption(opt => opt.setName('content').setDescription('The verification note text').setRequired(true))
-        )
-        .addSubcommand(sub =>
-            sub.setName('view')
-               .setDescription('Retrieve and display an applicant log history profile')
-               .addUserOption(opt => opt.setName('target').setDescription('The candidate').setRequired(true))
-        ),
-    new SlashCommandBuilder()
         .setName('onboard')
-        .setDescription('Send portfolio feedback and portal onboarding instructions')
-        .addUserOption(option => option.setName('applicant').setDescription('The candidate moving forward').setRequired(true)),
-    new SlashCommandBuilder()
-        .setName('process')
-        .setDescription('Notify the candidate that their files are being processed')
-        .addUserOption(option => option.setName('applicant').setDescription('The candidate whose file is compiling').setRequired(true))
+        .setDescription('Manually onboard a candidate outside of an active interview channel workflow')
+        .addUserOption(option => option.setName('candidate').setDescription('The user being accepted').setRequired(true))
+        .addStringOption(option => option.setName('role').setDescription('The deployment discipline').setRequired(true).addChoices(
+            { name: 'Programming & Scripting', value: 'scripter' },
+            { name: 'Environmental Design & Building', value: 'builder' },
+            { name: 'User Interface & Graphic Design', value: 'ui_designer' },
+            { name: 'Project Quality & Management', value: 'management' }
+        ))
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 client.once('ready', async () => {
-    console.log(`✨ ${client.user.tag} Auto-Code Engine is live.`);
+    console.log(`✨ ${client.user.tag} Baseline AI Assist & Standalone Onboarding Core Active.`);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Advanced command interfaces synced successfully.');
     } catch (error) {
         console.error('❌ Sync failed:', error);
     }
@@ -120,17 +128,60 @@ client.once('ready', async () => {
 // ============================================
 //          INTERACTION CORE CONTROLLER
 // ============================================
-
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
+    // AI ASSIST TOGGLE ROUTER
+    if (interaction.commandName === 'aiassist') {
+        if (!interaction.channel.isThread() || interaction.channel.parent?.id !== CONFIG.FORUM_CHANNEL_ID) {
+            return interaction.reply({ content: '❌ This tool can only be used inside an active interview thread workspace.', ephemeral: true });
+        }
+
+        const threadId = interaction.channel.id;
+        const currentMode = SYSTEM_CACHE.aiModeActive[threadId] || false;
+        SYSTEM_CACHE.aiModeActive[threadId] = !currentMode;
+
+        const toggleStatusEmbed = new EmbedBuilder()
+            .setAuthor({ name: '⚡ System Status Core Router', iconURL: client.user.displayAvatarURL() });
+
+        if (SYSTEM_CACHE.aiModeActive[threadId]) {
+            toggleStatusEmbed
+                .setColor(COLORS.purple)
+                .setTitle('🔮 AUTOMATION ENGINE: INITIALIZED')
+                .setDescription([
+                    '```glsl',
+                    '# SYSTEM CONFIG STABLE',
+                    'STATUS: INTERCEPT MODE ENABLED',
+                    '```',
+                    '┌── **Operational Mode Details**',
+                    '├── » *AI Copilot is now parsing live text input streams.*',
+                    '└── » *Incoming candidate messages will generate real-time pending drafts.*'
+                ].join('\n'));
+        } else {
+            toggleStatusEmbed
+                .setColor(COLORS.neutral)
+                .setTitle('⚙️ AUTOMATION ENGINE: DEACTIVATED')
+                .setDescription([
+                    '```yaml',
+                    'status: STANDBY',
+                    'mode: MANUAL_OVERRIDE',
+                    '```',
+                    '┌── **Operational Mode Details**',
+                    '└── » *Automated copilot response generators are offline. Manual entry required.*'
+                ].join('\n'));
+        }
+
+        return interaction.reply({ embeds: [toggleStatusEmbed] });
+    }
+
+    // INTERVIEW SETUP 
     if (interaction.commandName === 'interview') {
         const candidate = interaction.options.getUser('candidate');
 
         const selectionEmbed = new EmbedBuilder()
             .setColor(COLORS.info)
-            .setTitle('🛠️ Department Assignment Deployment')
-            .setDescription(`Select the designated target operations sector or project group for **${candidate.username}** below to spin up their bridge file.`);
+            .setTitle('📂 Deployment Hub ── Assign Department')
+            .setDescription(`Select the operational group or project workflow domain for **${candidate.username}** below to spin up their network layout file.`);
 
         const sectorMenu = new StringSelectMenuBuilder()
             .setCustomId(`selectsector_${candidate.id}`)
@@ -146,50 +197,43 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ embeds: [selectionEmbed], components: [row], ephemeral: true });
     }
 
+    // METRICS DASHBOARD
     if (interaction.commandName === 'dashboard') {
         const dashEmbed = new EmbedBuilder()
             .setColor(COLORS.neutral)
-            .setTitle('📊 Certamen Studios HR Metrics Monitor')
-            .setDescription('Real-time analytics engine deployment state logs.')
+            .setTitle('🖥️ Operational Performance Analytics')
+            .setDescription('`📊 Live Network Diagnostics Log` ── Updates Active')
             .addFields(
-                { name: '🔄 Live Bridges Open', value: `\`${SYSTEM_CACHE.activeInterviews}\` Active`, inline: true },
-                { name: '📈 Combined Sessions', value: `\`${SYSTEM_CACHE.totalInterviews}\` Total`, inline: true },
-                { name: '🏆 Accepted Roster', value: `\`${SYSTEM_CACHE.acceptedCount}\` Hired`, inline: true },
-                { name: '📁 Archived Denials', value: `\`${SYSTEM_CACHE.rejectedCount}\` Denied`, inline: true }
-            )
-            .setTimestamp();
-
+                { name: '📥 Active Message Channels', value: `\`▰▰▰▰▱▱▱▱▱▱ 40%\`\n» **${SYSTEM_CACHE.activeInterviews}** Active Sessions`, inline: true },
+                { name: '📦 Cumulative Processed Logs', value: `\`▰▰▰▰▰▰▰▱▱▱ 70%\`\n» **${SYSTEM_CACHE.totalInterviews}** Total Streams`, inline: true }
+            );
         return interaction.reply({ embeds: [dashEmbed] });
     }
 
-    if (interaction.commandName === 'notes') {
-        const subcommand = interaction.options.getSubcommand();
-        const target = interaction.options.getUser('target');
+    // FREE-STANDING OFF-CHAT MANUAL ONBOARD COMMAND
+    if (interaction.commandName === 'onboard') {
+        const candidate = interaction.options.getUser('candidate');
+        const role = interaction.options.getString('role');
 
-        if (!SYSTEM_CACHE.userNotes[target.id]) SYSTEM_CACHE.userNotes[target.id] = [];
+        const modal = new ModalBuilder()
+            .setCustomId(`manualhiremodal_${candidate.id}_${role}`)
+            .setTitle('📝 Enter Performance Score');
 
-        if (subcommand === 'add') {
-            const content = interaction.options.getString('content');
-            const timestampedNote = `\`[${new Date().toLocaleDateString()}]\` ${content} *(by ${interaction.user.username})*`;
-            SYSTEM_CACHE.userNotes[target.id].push(timestampedNote);
-            return interaction.reply({ content: `✅ Note added securely to **${target.username}'s** profile history record.`, ephemeral: true });
-        }
+        const scoreInput = new TextInputBuilder()
+            .setCustomId('metrics_passrate')
+            .setLabel('Pass Rate (%)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., 95%')
+            .setRequired(true);
 
-        if (subcommand === 'view') {
-            const records = SYSTEM_CACHE.userNotes[target.id];
-            const notesEmbed = new EmbedBuilder()
-                .setColor(COLORS.warning)
-                .setTitle(`📝 Evaluation History: ${target.username}`)
-                .setDescription(records.length > 0 ? records.join('\n') : '*No background evaluation flags or custom notes logged on file.*');
-            return interaction.reply({ embeds: [notesEmbed], ephemeral: true });
-        }
+        modal.addComponents(new ActionRowBuilder().addComponents(scoreInput));
+        await interaction.showModal(modal);
     }
 });
 
 // ============================================
 //        SELECT MENU CAPTURE ENGINE
 // ============================================
-
 client.on('interactionCreate', async interaction => {
     if (!interaction.isStringSelectMenu()) return;
 
@@ -207,23 +251,32 @@ client.on('interactionCreate', async interaction => {
 
             const threadEmbed = new EmbedBuilder()
                 .setColor(COLORS.info)
-                .setTitle(`💬 Live Chat Active: ${candidate.username}`)
-                .setDescription(`This is a dedicated, real-time message bridge to **${candidate.displayName}**.\n\n### 🛠️ Operation Rules:\n* **Anything you type below** will instantly deliver straight to their DMs.\n* **Any responses they send** will appear directly right here in real time.`)
+                .setTitle(`📶 Network Tunnel Linked ── ${candidate.username}`)
+                .setDescription([
+                    '```ansi',
+                    '[1;34m[READY][0m Communications routing tunnel configured smoothly.',
+                    '```',
+                    '### 🛠️ Protocol Infrastructure:',
+                    '┌── **Direct Route Instructions**',
+                    '├── » *Standard texts typed directly below transfer instantly into user DMs.*',
+                    '├── » *Toggle automated drafting features using* `/aiassist` *at any time.*',
+                    '└── » *Candidate responses are piped directly back to this control feed workspace.*'
+                ].join('\n'))
                 .addFields(
-                    { name: '🆔 Target User ID', value: `\`${candidate.id}\``, inline: true },
-                    { name: '🛠️ Position Applied', value: `\`${role.toUpperCase()}\``, inline: true }
+                    { name: '🆔 Core System ID', value: `\`${candidate.id}\``, inline: true },
+                    { name: '💼 Assigned Discipline', value: `\`${role.toUpperCase()}\``, inline: true }
                 );
 
             const actionRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`hire_${candidate.id}_${role}`).setLabel('Hire & Close').setStyle(ButtonStyle.Success).setEmoji('✅'),
-                new ButtonBuilder().setCustomId(`deny_${candidate.id}_${role}`).setLabel('Deny & Close').setStyle(ButtonStyle.Danger).setEmoji('❌')
+                new ButtonBuilder().setCustomId(`hire_${candidate.id}_${role}`).setLabel('Finalize Hire').setStyle(ButtonStyle.Success).setEmoji('✅'),
+                new ButtonBuilder().setCustomId(`deny_${candidate.id}_${role}`).setLabel('Drop Candidate').setStyle(ButtonStyle.Danger).setEmoji('❌')
             );
 
             const thread = await forumChannel.threads.create({
                 name: threadName,
                 autoArchiveDuration: 1440,
                 message: {
-                    content: `🎙️ **Interview Session Initiated** for ${candidate}. All messages are now bridged.`,
+                    content: `🎙️ **Session Node Online:** Terminal channel built for ${candidate}.`,
                     embeds: [threadEmbed],
                     components: [actionRow]
                 }
@@ -231,6 +284,7 @@ client.on('interactionCreate', async interaction => {
 
             SYSTEM_CACHE.totalInterviews++;
             SYSTEM_CACHE.activeInterviews++;
+            SYSTEM_CACHE.aiModeActive[thread.id] = true;
 
             try {
                 const welcomeEmbed = new EmbedBuilder()
@@ -250,14 +304,56 @@ client.on('interactionCreate', async interaction => {
 // ============================================
 //         DECISION HANDLING MECHANICS
 // ============================================
-
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
-    const [action, targetId, role] = interaction.customId.split('_');
-    if (action !== 'hire' && action !== 'deny') return;
+    const parts = interaction.customId.split('_');
+    const action = parts[0];
+    const targetId = parts[1];
+    const role = parts[2];
+    
+    if (action === 'aipass' || action === 'aidrop') {
+        await interaction.deferUpdate();
+        const cachedPayload = SYSTEM_CACHE.activeDrafts[interaction.message.id];
+        if (!cachedPayload) return;
 
-    // --- CASE A: IMMEDIATE DENIAL SEQUENCE ---
+        if (action === 'aipass') {
+            try {
+                const targetUser = await client.users.fetch(cachedPayload.candidateId);
+                const outboundEmbed = new EmbedBuilder()
+                    .setColor(COLORS.neutral)
+                    .setAuthor({ name: `Message from Arya (HR Representative)`, iconURL: cachedPayload.senderAvatar })
+                    .setDescription(cachedPayload.draftText)
+                    .setTimestamp();
+
+                await targetUser.send({ embeds: [outboundEmbed] });
+                
+                const logConfirmation = new EmbedBuilder()
+                    .setColor(COLORS.success)
+                    .setTitle('🚀 TRANSACTION CLEARANCE EXECUTED')
+                    .setDescription([
+                        '```ansi',
+                        '[1;32m[DISPATCHED][0m Response pipeline cleared out successfully.',
+                        '```',
+                        `**Forwarded Output Frame:**\n> ${cachedPayload.draftText}`
+                    ].join('\n'));
+                
+                await interaction.message.edit({ embeds: [logConfirmation], components: [] });
+            } catch (error) {
+                await interaction.followUp({ content: '❌ **Message Drop Failed:** Candidate DMs locked.', ephemeral: true });
+            }
+        } else {
+            const dropEmbed = new EmbedBuilder()
+                .setColor(COLORS.danger)
+                .setTitle('🗑️ DISCARD OPERATIONS REGISTERED')
+                .setDescription('```diff\n- Core target draft deleted from live queues.\n```');
+            await interaction.message.edit({ embeds: [dropEmbed], components: [] });
+        }
+
+        delete SYSTEM_CACHE.activeDrafts[interaction.message.id];
+        return;
+    }
+
     if (action === 'deny') {
         await interaction.deferReply({ ephemeral: true });
         let targetUser;
@@ -275,33 +371,27 @@ client.on('interactionCreate', async interaction => {
 
         const logsChan = await client.channels.fetch(CONFIG.NOT_HIRED_CHANNEL_ID).catch(() => null);
         if (logsChan) {
-            const formattedTime = `Today at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
             const visualAuditEmbed = new EmbedBuilder()
                 .setColor(COLORS.danger)
-                .setTitle('🔴 Application Record Archived')
-                .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
+                .setTitle('🔴 System Repository Compiling Archive')
+                .setDescription('`🔒 Compressing Application Session File Blocks`')
                 .addFields(
-                    { name: '👤 Candidate', value: `${targetUser}\n(${targetUser.username})`, inline: true },
-                    { name: '🛠️ Attempted Designation', value: `\`${role.toUpperCase()}\``, inline: true }
-                )
-                .setFooter({ text: `Processed by HR Agent: ${interaction.user.username} • ${formattedTime}` });
-
+                    { name: '👤 Candidate File', value: `${targetUser}\n(${targetUser.username})`, inline: true },
+                    { name: '🛠️ Target Role', value: `\`${role.toUpperCase()}\``, inline: true }
+                );
             await logsChan.send({ embeds: [visualAuditEmbed] });
         }
 
         await interaction.editReply({ content: '🏁 **Candidate denied. Session archived.**' });
         await interaction.channel.setName(`[DENIED] ${targetUser.username}`);
         await interaction.channel.setArchived(true);
-        return;
     }
 
-    // --- CASE B: HIRE INPUT MODAL SEQUENCING ---
     if (action === 'hire') {
         const modal = new ModalBuilder()
             .setCustomId(`hiremodal_${targetId}_${role}`)
             .setTitle('📝 Enter Performance Score');
 
-        // Job code is now generated automatically, removing text input component completely
         const scoreInput = new TextInputBuilder()
             .setCustomId('metrics_passrate')
             .setLabel('Pass Rate (%)')
@@ -314,36 +404,41 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// Handle Hiring Metrics Submission & Prompt Manager Routing
+// MODAL HANDLING PROTOCOL
 client.on('interactionCreate', async interaction => {
     if (!interaction.isModalSubmit()) return;
 
-    if (interaction.customId.startsWith('hiremodal_')) {
+    if (interaction.customId.startsWith('hiremodal_') || interaction.customId.startsWith('manualhiremodal_')) {
         await interaction.deferReply();
-        const [, targetId, role] = interaction.customId.split('_');
+        const isManual = interaction.customId.startsWith('manualhiremodal_');
+        
+        const parts = interaction.customId.split('_');
+        const targetId = parts[1];
+        const role = parts[2];
 
         const passRate = interaction.fields.getTextInputValue('metrics_passrate');
-        
-        // Auto-generating the small random job code right here 
         const generatedCode = generateSmallJobCode();
 
-        SYSTEM_CACHE.pendingHires[interaction.channel.id] = {
+        const cacheKey = isManual ? `manual_${interaction.id}` : interaction.channel.id;
+
+        SYSTEM_CACHE.pendingHires[cacheKey] = {
             targetId,
             role,
             jobCode: generatedCode,
             passRate,
             hrAgent: interaction.user,
-            channel: interaction.channel
+            isManual: isManual,
+            channel: isManual ? null : interaction.channel
         };
 
         const routingEmbed = new EmbedBuilder()
             .setColor(COLORS.warning)
             .setTitle('💼 Select Assignment Manager')
-            .setDescription(`Metrics captured successfully! (Job Code generated: \`${generatedCode}\`). Select the specific manager below who should be notified to establish contact with the new employee.`);
+            .setDescription(`Metrics captured! (Job Code: \`${generatedCode}\`). Choose the designated project manager below to handle onboarding routing.`);
 
         const managerSelect = new UserSelectMenuBuilder()
-            .setCustomId(`routepm_${interaction.channel.id}`)
-            .setPlaceholder('Choose a manager to handle contact assignment...')
+            .setCustomId(`routepm_${cacheKey}`)
+            .setPlaceholder('Choose a manager...')
             .setMinValues(1)
             .setMaxValues(1);
 
@@ -352,78 +447,65 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// Finalize Assignment Routing, DM Manager, and Publish Clean Panel Card
+// FINALIZE ROUTING ASSIGNMENT
 client.on('interactionCreate', async interaction => {
     if (!interaction.isUserSelectMenu()) return;
 
     if (interaction.customId.startsWith('routepm_')) {
         await interaction.deferUpdate();
-        const threadId = interaction.customId.split('_')[1];
+        const cacheKey = interaction.customId.split('_')[1];
         const selectedManager = interaction.users.first();
 
-        const hireData = SYSTEM_CACHE.pendingHires[threadId];
+        const hireData = SYSTEM_CACHE.pendingHires[cacheKey];
         if (!hireData) return;
 
         let targetUser;
         try { targetUser = await client.users.fetch(hireData.targetId); } catch { return; }
 
-        if (SYSTEM_CACHE.activeInterviews > 0) SYSTEM_CACHE.activeInterviews--;
+        if (!hireData.isManual && SYSTEM_CACHE.activeInterviews > 0) {
+            SYSTEM_CACHE.activeInterviews--;
+        }
         SYSTEM_CACHE.acceptedCount++;
 
-        const formattedTime = `Today at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-
-        // Build the precise panel card matched directly to your image layout
         const fineAuditCardEmbed = new EmbedBuilder()
             .setColor(COLORS.success)
-            .setTitle('🟢 New Talent Recruited')
+            .setTitle('🟢 Roster File Insertion Executed')
+            .setDescription('`⚡ Transferring operational system permissions cards...`')
             .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
             .addFields(
-                { name: '👤 Employee', value: `${targetUser}\n(${targetUser.username})`, inline: true },
-                { name: '🛠️ Assigned Designation', value: `\`${hireData.role.toUpperCase()}\``, inline: true },
-                { name: '🏷️ Job Code', value: `\`${hireData.jobCode}\``, inline: true },
-                { name: '📊 Pass Rate', value: `\`${hireData.passRate}\``, inline: true }
-            )
-            .setFooter({ text: `Processed by HR Agent: ${hireData.hrAgent.username} • ${formattedTime}` });
+                { name: '👤 Employed Talent', value: `${targetUser}\n(${targetUser.username})`, inline: true },
+                { name: '🛠️ Core Role', value: `\`${hireData.role.toUpperCase()}\``, inline: true },
+                { name: '🏷️ Assigned Code', value: `\`${hireData.jobCode}\``, inline: true },
+                { name: '📊 Matrix Output', value: `\`${hireData.passRate}\``, inline: true }
+            );
 
-        // A) Push formal copy to target logs channel configuration settings
         const logsChan = await client.channels.fetch(CONFIG.HIRED_CHANNEL_ID).catch(() => null);
-        if (logsChan) {
-            await logsChan.send({ embeds: [fineAuditCardEmbed] });
-        }
+        if (logsChan) await logsChan.send({ embeds: [fineAuditCardEmbed] });
 
-        // B) Forward file parameters straight to chosen manager DMs
-        try {
-            const managerAlertEmbed = EmbedBuilder.from(fineAuditCardEmbed)
-                .setTitle('📥 Action Required: New Onboarding Assignment')
-                .setDescription(`Greetings **${selectedManager.username}**,\n\nYou have been designated to contact this newly accepted candidate to handle documentation layout setups.`);
-            await selectedManager.send({ embeds: [managerAlertEmbed] });
-        } catch {
-            await hireData.channel.send({ content: `⚠️ **Warning:** Could not send private alert to ${selectedManager} (DMs locked).` });
-        }
+        try { await selectedManager.send({ embeds: [fineAuditCardEmbed] }); } catch {}
 
-        // C) Message the Candidate their general confirmation
         try {
             const offerEmbed = new EmbedBuilder()
                 .setColor(COLORS.success)
                 .setTitle('🎉 Certamen Studios — Application Accepted!')
-                .setDescription(`Hello **${targetUser.displayName}**,\n\nWe are absolutely thrilled to inform you that you have been **ACCEPTED** into Certamen Studios for the position of **${hireData.role.toUpperCase()}**! A manager (<@${selectedManager.id}>) will reach out to you shortly.`);
+                .setDescription(`Hello **${targetUser.displayName}**,\n\nWe are absolutely thrilled to inform you that you have been **ACCEPTED** into Certamen Studios for the position of **${hireData.role.toUpperCase()}**! A manager (<@${selectedManager.id}>) will reach out shortly.`);
             await targetUser.send({ embeds: [offerEmbed] });
         } catch {}
 
-        // Complete workspace session management
-        await hireData.channel.send({ content: `🏁 **File finalized.** Small job code generated [\`${hireData.jobCode}\`] and dispatched to manager ${selectedManager}. Archiving room...` });
-        await hireData.channel.setName(`[HIRED] ${targetUser.username}`);
-        await hireData.channel.setArchived(true);
+        if (!hireData.isManual && hireData.channel) {
+            await hireData.channel.send({ content: `🏁 **File finalized.** Job code generated [\`${hireData.jobCode}\`] and dispatched to manager.` });
+            await hireData.channel.setName(`[HIRED] ${targetUser.username}`);
+            await hireData.channel.setArchived(true);
+        }
         
-        delete SYSTEM_CACHE.pendingHires[threadId];
-        await interaction.editReply({ content: '📨 **Success:** Profile compiled and dispatched.', embeds: [], components: [] });
+        delete SYSTEM_CACHE.pendingHires[cacheKey];
+        await interaction.message.edit({ content: '📨 **Success:** Onboarding profile compiled and dispatched safely.', embeds: [], components: [] });
     }
 });
 
 // ============================================
 //       MESSAGE INTERCEPT ENGINE (THE BRIDGE)
 // ============================================
-
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
@@ -431,7 +513,7 @@ client.on('messageCreate', async message => {
         const startMessage = await message.channel.fetchStarterMessage().catch(() => null);
         if (!startMessage || !startMessage.embeds[0]) return;
 
-        const idField = startMessage.embeds[0].fields.find(f => f.name === '🆔 Target User ID');
+        const idField = startMessage.embeds[0].fields.find(f => f.name === '🆔 Core System ID');
         if (!idField) return;
 
         const targetUserId = idField.value.replace(/`/g, '');
@@ -458,12 +540,15 @@ client.on('messageCreate', async message => {
         const activeThreads = await forumChannel.threads.fetchActive();
         
         let targetThread = null;
+        let roleType = '';
         for (const [_, thread] of activeThreads.threads) {
             const starter = await thread.fetchStarterMessage().catch(() => null);
             if (starter && starter.embeds[0]) {
-                const idField = starter.embeds[0].fields.find(f => f.name === '🆔 Target User ID');
+                const idField = starter.embeds[0].fields.find(f => f.name === '🆔 Core System ID');
+                const roleField = starter.embeds[0].fields.find(f => f.name === '💼 Assigned Discipline');
                 if (idField && idField.value.replace(/`/g, '') === message.author.id) {
                     targetThread = thread;
+                    roleType = roleField ? roleField.value.replace(/`/g, '') : '';
                     break;
                 }
             }
@@ -478,6 +563,48 @@ client.on('messageCreate', async message => {
 
             await targetThread.send({ embeds: [incomingEmbed] });
             await message.react('✅').catch(() => {});
+
+            if (SYSTEM_CACHE.aiModeActive[targetThread.id]) {
+                const calculatingEmbed = new EmbedBuilder()
+                    .setColor(COLORS.purple)
+                    .setTitle('🤖 CONVERSATIONAL CORE: THINKING')
+                    .setDescription([
+                        '`▰▰▰▰▰▰▰▱▱▱ 70%` Evaluating candidate inputs...',
+                        '```ansi',
+                        '[1;35m[PROCESSING][0m Formulating context-appropriate solution response frames...',
+                        '```'
+                    ].join('\n'));
+
+                const placeholderMsg = await targetThread.send({ embeds: [calculatingEmbed] });
+
+                const suggestedAIResponse = generateAIResponseToUser(message.content, roleType);
+
+                const aiDraftCard = new EmbedBuilder()
+                    .setColor(COLORS.purple)
+                    .setTitle('🤖 CONVERSATIONAL CORE: ANALYSIS COMPLETE')
+                    .setDescription([
+                        `**Applicant Input Node:** *"${message.content}"*`,
+                        '```ansi',
+                        '[1;32m[PROPOSAL STABLE][0m Recommended transmission generation loaded below.',
+                        '```',
+                        '### 📝 Formulated System Reply Draft:',
+                        `${suggestedAIResponse}`
+                    ].join('\n'))
+                    .setFooter({ text: 'Review pipeline authorization buttons below to forward or drop this draft block.' });
+
+                const draftButtonsRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`aipass_${message.author.id}`).setLabel('Approve & Send').setStyle(ButtonStyle.Purple).setEmoji('🚀'),
+                    new ButtonBuilder().setCustomId(`aidrop_${message.author.id}`).setLabel('Reject Draft').setStyle(ButtonStyle.Danger).setEmoji('🗑️')
+                );
+
+                await placeholderMsg.edit({ embeds: [aiDraftCard], components: [draftButtonsRow] });
+
+                SYSTEM_CACHE.activeDrafts[placeholderMsg.id] = {
+                    candidateId: message.author.id,
+                    draftText: suggestedAIResponse,
+                    senderAvatar: client.user.displayAvatarURL() 
+                };
+            }
         }
     }
 });
