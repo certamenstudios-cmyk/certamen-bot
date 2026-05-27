@@ -20,6 +20,7 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent
     ],
     partials: [Partials.Channel]
@@ -31,11 +32,6 @@ const COLORS = {
     danger: '#f04747',
     warning: '#faa61a'
 };
-
-// Active state memory to link channels, candidates, and ongoing assessment logs
-const deliveryCache = new Map();
-const activeInterviews = new Map(); 
-const evaluationStorage = new Map(); 
 
 // =======================
 // SLASH COMMANDS SETUP
@@ -58,19 +54,16 @@ const commands = [
         ),
     new SlashCommandBuilder()
         .setName('dm')
-        .setDescription('Direct message an applicant safely via the bot')
-        .addUserOption(option =>
-            option.setName('user').setDescription('Target applicant').setRequired(true)
-        )
+        .setDescription('Send an explicit message to the applicant linked to this active channel')
         .addStringOption(option =>
-            option.setName('message').setDescription('Message content').setRequired(true)
+            option.setName('message').setDescription('Message content to deliver').setRequired(true)
         )
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 client.once('ready', async () => {
-    console.log(`🚀 ${client.user.tag} HR Automation System is fully functional.`);
+    console.log(`🚀 ${client.user.tag} Dual-Chat System (Live & Slash /dm) Active.`);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
     } catch (error) {
@@ -78,20 +71,19 @@ client.once('ready', async () => {
     }
 });
 
-// Dynamic interview panel building system
-function buildInterviewPanel(user, role) {
+function buildInterviewPanel(user, role, notes = "*No current evaluation added to cache.*") {
     const embed = new EmbedBuilder()
         .setColor(COLORS.neutral)
         .setAuthor({ name: 'Certamen Studios — HR Evaluation Control' })
         .setTitle('💼 Active Interview File Engine')
-        .setDescription(`This interaction grid controls the application state for **${user.displayName}** matches.`)
+        .setDescription(`This interaction grid controls the application state for this channel.\n\n**Applicant ID:** \`${user.id}\`\n**Target Role:** \`${role.toUpperCase()}\``)
         .addFields(
             { name: '👤 Candidate Profile', value: `${user} (@${user.username})`, inline: true },
             { name: '🛠️ Target Designation', value: `\`${role.toUpperCase()}\``, inline: true },
-            { name: '📌 Note Record Status', value: '*No current evaluation added to cache.*', inline: false }
+            { name: '📌 Note Record Status', value: notes, inline: false }
         )
         .setTimestamp()
-        .setFooter({ text: 'Certamen Human Resources Core' });
+        .setFooter({ text: 'Certamen Human Resources Core • Chat Link Active' });
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('accept').setLabel('Accept & Hire').setEmoji('✅').setStyle(ButtonStyle.Success),
@@ -102,41 +94,107 @@ function buildInterviewPanel(user, role) {
     return { embed, row };
 }
 
-// =======================
-// DM INBOUND FORWARDER
-// =======================
+// Scrapes the embed to grab candidate ID, target role, and evaluation notes
+async function getInterviewContext(channel) {
+    if (channel.type === 1) return null; // Ignore DMs
+    
+    const messages = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+    if (!messages) return null;
+
+    const panelMessage = messages.find(m => m.author.id === client.user.id && m.embeds.length > 0 && m.embeds[0].title === '💼 Active Interview File Engine');
+    if (!panelMessage) return null;
+    
+    const embed = panelMessage.embeds[0];
+    const idMatch = embed.description.match(/Applicant ID:\s*`(\d+)`/);
+    const roleMatch = embed.description.match(/Target Role:\s*`([^`]+)`/);
+    
+    if (!idMatch) return null;
+
+    const notesField = embed.fields.find(f => f.name === '📌 Note Record Status');
+    const notes = notesField ? notesField.value : "*No evaluation notes logged by interviewer.*";
+
+    return {
+        userId: idMatch[1],
+        role: roleMatch ? roleMatch[1] : 'Unknown',
+        notes: notes,
+        panelMessage: panelMessage
+    };
+}
+
+// Finds which text channel belongs to a specific applicant by scanning open active dashboards
+async function findChannelByApplicantId(userId) {
+    const guilds = client.guilds.cache;
+    for (const [_, guild] of guilds) {
+        const channels = await guild.channels.fetch().catch(() => null);
+        if (!channels) continue;
+
+        for (const [_, channel] of channels) {
+            if (channel && channel.isTextBased() && channel.type !== 1) {
+                const context = await getInterviewContext(channel);
+                if (context && context.userId === userId) {
+                    return channel;
+                }
+            }
+        }
+    }
+    return null;
+}
+
+// ============================================
+// TWO-WAY LIVE CHAT PIPELINE (MESSAGE HANDLER)
+// ============================================
 
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    if (message.channel.type === 1) { 
-        const logChannelId = process.env.LOG_CHANNEL_ID;
-        if (!logChannelId) return;
+    // 1. INBOUND PIPELINE: Applicant sends a DM -> Forwarded to open room
+    if (message.channel.type === 1) {
+        const targetChannel = await findChannelByApplicantId(message.author.id);
+        
+        if (!targetChannel) {
+            const logChannelId = process.env.LOG_CHANNEL_ID;
+            if (!logChannelId) return;
+            const logChannel = await client.channels.fetch(logChannelId).catch(() => null);
+            if (logChannel) {
+                const systemEmbed = new EmbedBuilder()
+                    .setColor(COLORS.warning)
+                    .setAuthor({ name: `Inbound DM (No Active Room): ${message.author.username}` })
+                    .setDescription(message.content || "*[Attachment]*");
+                await logChannel.send({ embeds: [systemEmbed] });
+            }
+            return;
+        }
+
+        const inboundEmbed = new EmbedBuilder()
+            .setColor(COLORS.warning)
+            .setAuthor({ name: `${message.author.displayName} (Applicant)`, iconURL: message.author.displayAvatarURL({ dynamic: true }) })
+            .setDescription(message.content || "*[Sent an attachment/image or empty text]*")
+            .setTimestamp();
+
+        await targetChannel.send({ embeds: [inboundEmbed] });
+        await message.react('📥');
+        return;
+    }
+
+    // 2. OUTBOUND PIPELINE: HR types regular text -> Forwarded to candidate DMs
+    const context = await getInterviewContext(message.channel);
+    if (context) {
+        // Stop words: Ignore messages starting with slash commands to allow slash executions seamlessly
+        if (message.content.startsWith('/')) return;
 
         try {
-            const logChannel = await client.channels.fetch(logChannelId);
-            if (!logChannel) return;
-
-            const deliveryReceipt = deliveryCache.get(message.author.id) || { status: 'Unknown', location: 'Direct Inbox' };
-
-            const replyEmbed = new EmbedBuilder()
-                .setColor(COLORS.warning)
-                .setAuthor({ 
-                    name: `Reply from: ${message.author.displayName} (@${message.author.username})`, 
-                    iconURL: message.author.displayAvatarURL({ dynamic: true }) 
-                })
-                .setDescription(message.content || "*[Sent an attachment/image or empty text]*")
-                .addFields(
-                    { name: '👤 Applicant Name', value: `${message.author.displayName} (${message.author.tag})`, inline: true },
-                    { name: '🆔 Account ID', value: `\`${message.author.id}\``, inline: true },
-                    { name: '📦 Last Delivery Audit', value: `🟢 Successfully Delivered to ${deliveryReceipt.location}`, inline: false }
-                )
+            const targetUser = await client.users.fetch(context.userId);
+            
+            const outboundEmbed = new EmbedBuilder()
+                .setColor(COLORS.neutral)
+                .setAuthor({ name: `Message from HR (Arya)`, iconURL: client.user.displayAvatarURL() })
+                .setDescription(message.content)
                 .setTimestamp();
 
-            await logChannel.send({ embeds: [replyEmbed] });
-            await message.react('✅');
+            await targetUser.send({ embeds: [outboundEmbed] });
+            await message.react('🕊️'); 
         } catch (error) {
-            console.error(error);
+            await message.reply({ content: '🔴 **Failed to deliver message:** The applicant might have closed their private DMs.' });
         }
     }
 });
@@ -165,9 +223,6 @@ client.on('interactionCreate', async interaction => {
             const user = interaction.options.getUser('applicant');
             const role = interaction.options.getString('role');
 
-            // Save relationship state in local cache mapping
-            activeInterviews.set(interaction.channelId, { userId: user.id, userObj: user, position: role });
-
             const panel = buildInterviewPanel(user, role);
             return interaction.reply({ embeds: [panel.embed], components: [panel.row] });
         }
@@ -191,21 +246,28 @@ client.on('interactionCreate', async interaction => {
             return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
+        // --- MANUALLY TRIPPED /DM SLASH COMMAND ---
         if (interaction.commandName === 'dm') {
-            const user = interaction.options.getUser('user');
+            const context = await getInterviewContext(interaction.channel);
+
+            if (!context) {
+                return interaction.reply({ content: '❌ **Error:** No active interview session mapped to this room.', ephemeral: true });
+            }
+
             const msg = interaction.options.getString('message');
-
-            const embed = new EmbedBuilder()
-                .setColor(COLORS.neutral)
-                .setDescription(msg)
-                .setTimestamp();
-
-            await interaction.reply({ content: `📡 Dispatching message...`, ephemeral: true });
+            await interaction.deferReply({ ephemeral: true });
 
             try {
-                await user.send({ embeds: [embed] });
-                deliveryCache.set(user.id, { status: 'Delivered', location: `@${user.username}'s DM` });
-                return interaction.editReply({ content: `🟢 **Delivered** directly to **${user.displayName}**.` });
+                const targetUser = await client.users.fetch(context.userId);
+                
+                const outboundEmbed = new EmbedBuilder()
+                    .setColor(COLORS.neutral)
+                    .setAuthor({ name: `Message from HR (Arya)`, iconURL: client.user.displayAvatarURL() })
+                    .setDescription(msg)
+                    .setTimestamp();
+
+                await targetUser.send({ embeds: [outboundEmbed] });
+                return interaction.editReply({ content: `🟢 **Delivered via Command** directly to **${targetUser.displayName}**.` });
             } catch (error) {
                 return interaction.editReply({ content: `🔴 **Delivery Failed:** Candidate has private DMs closed.` });
             }
@@ -214,15 +276,21 @@ client.on('interactionCreate', async interaction => {
 
     // --- BUTTON ACTIONS ENGINE ---
     if (interaction.isButton()) {
-        const fileDetails = activeInterviews.get(interaction.channelId);
+        const context = await getInterviewContext(interaction.channel);
 
-        if (!fileDetails) {
-            return interaction.reply({ content: '❌ System Timeout: No linked candidate entry map found for this room. Re-run `/interview`.', ephemeral: true });
+        if (!context) {
+            return interaction.reply({ content: '❌ System Error: No active interview profile detected in this text channel.', ephemeral: true });
         }
 
-        const targetUser = fileDetails.userObj;
-        const targetRole = fileDetails.position;
-        const currentNotes = evaluationStorage.get(interaction.channelId) || "*No evaluation notes logged by interviewer.*";
+        let targetUser;
+        try {
+            targetUser = await client.users.fetch(context.userId);
+        } catch {
+            return interaction.reply({ content: '❌ Error: Failed to safely fetch target candidate profile data from Discord.', ephemeral: true });
+        }
+
+        const targetRole = context.role;
+        const currentNotes = context.notes;
 
         // ACCEPT/HIRE PIPELINE
         if (interaction.customId === 'accept') {
@@ -235,6 +303,7 @@ client.on('interactionCreate', async interaction => {
                 .setColor(COLORS.success)
                 .setTitle('🎉 Certamen Studios — Application Update')
                 .setDescription(`Hello **${targetUser.displayName}**,\n\nWe are absolutely thrilled to inform you that you have been **ACCEPTED** into Certamen Studios for the position of **${targetRole.toUpperCase()}**!\n\nOur operations team will reach out shortly regarding onboarding details. Welcome to the studio!`)
+                .addFields({ name: '📝 Your Interview Performance Notes', value: currentNotes })
                 .setTimestamp();
 
             let dmStatus = "🟢 Message Delivered Safely to Inbox.";
@@ -260,7 +329,9 @@ client.on('interactionCreate', async interaction => {
                     .setFooter({ text: `Processed by HR: ${interaction.user.tag}` });
 
                 await logChan.send({ embeds: [feedEmbed] });
-                return interaction.editReply({ content: `✅ **Onboarding Complete:** Candidate logged inside corporate records feed.\n📦 **DM Audit:** ${dmStatus}` });
+                await context.panelMessage.delete().catch(() => {}); 
+
+                return interaction.editReply({ content: `✅ **Onboarding Complete:** Candidate logged inside records feed.\n📦 **DM Audit:** ${dmStatus}\n🔒 *Chat session has ended.*` });
             } catch (err) {
                 console.error(err);
                 return interaction.editReply({ content: '❌ Core Failure: Couldn\'t write metrics block to the designated Hired tracking channel.' });
@@ -278,6 +349,7 @@ client.on('interactionCreate', async interaction => {
                 .setColor(COLORS.danger)
                 .setTitle('Certamen Studios — Application Update')
                 .setDescription(`Hello **${targetUser.displayName}**,\n\nThank you for taking the time to discuss options with our HR team. Unfortunately, at this time we have decided not to move forward with your application file for the **${targetRole.toUpperCase()}** position.\n\nWe wish you the absolute best in your future development journey.`)
+                .addFields({ name: '📝 Your Interview Performance Notes', value: currentNotes })
                 .setTimestamp();
 
             let dmStatus = "🟢 Notification Sent Successfully.";
@@ -302,7 +374,9 @@ client.on('interactionCreate', async interaction => {
                     .setFooter({ text: `Processed by HR: ${interaction.user.tag}` });
 
                 await logChan.send({ embeds: [feedEmbed] });
-                return interaction.editReply({ content: `❌ **File Closed:** Rejected state logged to audit tracking board.\n📦 **DM Audit:** ${dmStatus}` });
+                await context.panelMessage.delete().catch(() => {}); 
+
+                return interaction.editReply({ content: `❌ **File Closed:** Rejected state logged to audit tracking board.\n📦 **DM Audit:** ${dmStatus}\n🔒 *Chat session has ended.*` });
             } catch (err) {
                 console.error(err);
                 return interaction.editReply({ content: '❌ Core Failure: Couldn\'t write metrics block to Not-Hired logging channel.' });
@@ -334,26 +408,14 @@ client.on('interactionCreate', async interaction => {
     if (interaction.isModalSubmit()) {
         if (interaction.customId === 'evaluation_modal') {
             const hrNotes = interaction.fields.getTextInputValue('notes_text');
-            
-            // Commit evaluation notes to cache memory linked to this room
-            evaluationStorage.set(interaction.channelId, hrNotes);
+            const context = await getInterviewContext(interaction.channel);
 
-            const fileDetails = activeInterviews.get(interaction.channelId);
-            if (fileDetails) {
-                const updatedPanel = new EmbedBuilder()
-                    .setColor(COLORS.warning)
-                    .setAuthor({ name: 'Certamen Studios — HR Evaluation Control' })
-                    .setTitle('💼 Active Interview File Engine')
-                    .setDescription(`This interaction grid controls the application state for **${fileDetails.userObj.displayName}** matches.`)
-                    .addFields(
-                        { name: '👤 Candidate Profile', value: `${fileDetails.userObj} (@${fileDetails.userObj.username})`, inline: true },
-                        { name: '🛠️ Target Designation', value: `\`${fileDetails.position.toUpperCase()}\``, inline: true },
-                        { name: '📌 Note Record Status', value: `📝 **Cached Notes Profile:**\n*${hrNotes}*`, inline: false }
-                    )
-                    .setTimestamp()
-                    .setFooter({ text: 'Certamen Human Resources Core • Note Loaded' });
+            if (context) {
+                const targetUser = await client.users.fetch(context.userId);
+                const updatedPanel = buildInterviewPanel(targetUser, context.role, `📝 **Cached Notes Profile:**\n*${hrNotes}*`);
 
-                await interaction.update({ embeds: [updatedPanel] });
+                await context.panelMessage.edit({ embeds: [updatedPanel.embed], components: [updatedPanel.row] });
+                await interaction.reply({ content: '✅ Notes updated on the tracking board container.', ephemeral: true });
             } else {
                 return interaction.reply({ content: '📝 Evaluation notes cached internally.', ephemeral: true });
             }
