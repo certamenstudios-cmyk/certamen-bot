@@ -54,8 +54,18 @@ const SYSTEM_CACHE = {
     acceptedCount: 0,
     rejectedCount: 0,
     userNotes: {},
-    pendingReports: {} // Core temporary tracking memory cache
+    pendingHires: {} 
 };
+
+// Helper utility function to auto-generate a random 4-character small job code
+function generateSmallJobCode() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let code = '';
+    for (let i = 0; i < 4; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+}
 
 // ============================================
 //         COMMAND REGISTRATION ENGINE
@@ -98,10 +108,10 @@ const commands = [
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 client.once('ready', async () => {
-    console.log(`✨ ${client.user.tag} Live-Counter Engine is live.`);
+    console.log(`✨ ${client.user.tag} Auto-Code Engine is live.`);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Advanced live interfaces synced successfully.');
+        console.log('✅ Advanced command interfaces synced successfully.');
     } catch (error) {
         console.error('❌ Sync failed:', error);
     }
@@ -205,8 +215,8 @@ client.on('interactionCreate', async interaction => {
                 );
 
             const actionRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`prehire_${candidate.id}_${role}`).setLabel('Hire & Close').setStyle(ButtonStyle.Success).setEmoji('✅'),
-                new ButtonBuilder().setCustomId(`predeny_${candidate.id}_${role}`).setLabel('Deny & Close').setStyle(ButtonStyle.Danger).setEmoji('❌')
+                new ButtonBuilder().setCustomId(`hire_${candidate.id}_${role}`).setLabel('Hire & Close').setStyle(ButtonStyle.Success).setEmoji('✅'),
+                new ButtonBuilder().setCustomId(`deny_${candidate.id}_${role}`).setLabel('Deny & Close').setStyle(ButtonStyle.Danger).setEmoji('❌')
             );
 
             const thread = await forumChannel.threads.create({
@@ -238,260 +248,175 @@ client.on('interactionCreate', async interaction => {
 });
 
 // ============================================
-//        REPORT MODAL & PRIVATE DM WORKFLOW
+//         DECISION HANDLING MECHANICS
 // ============================================
 
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
     const [action, targetId, role] = interaction.customId.split('_');
-    if (action !== 'prehire' && action !== 'predeny') return;
+    if (action !== 'hire' && action !== 'deny') return;
 
-    // Report Filing Modal Interface
-    const modal = new ModalBuilder()
-        .setCustomId(`reportmodal_${action}_${targetId}_${role}`)
-        .setTitle('📋 File Performance Evaluation Report');
+    // --- CASE A: IMMEDIATE DENIAL SEQUENCE ---
+    if (action === 'deny') {
+        await interaction.deferReply({ ephemeral: true });
+        let targetUser;
+        try { targetUser = await client.users.fetch(targetId); } catch { return; }
 
-    const performanceInput = new TextInputBuilder()
-        .setCustomId('report_performance')
-        .setLabel('Candidate Performance Summary')
-        .setStyle(TextInputStyle.Paragraph)
-        .setPlaceholder('Provide a detailed summary of how the candidate performed during the live chat...')
-        .setRequired(true);
+        if (SYSTEM_CACHE.activeInterviews > 0) SYSTEM_CACHE.activeInterviews--;
+        SYSTEM_CACHE.rejectedCount++;
 
-    const justificationInput = new TextInputBuilder()
-        .setCustomId('report_justification')
-        .setLabel('Reason / Justification for Decision')
-        .setStyle(TextInputStyle.Paragraph)
-        .setPlaceholder('Why should this candidate be accepted or rejected? Detail strengths/weaknesses.')
-        .setRequired(true);
+        const rejectEmbed = new EmbedBuilder()
+            .setColor(COLORS.danger)
+            .setTitle('Certamen Studios — Application Status Update')
+            .setDescription(`Hello **${targetUser.displayName}**,\n\nThank you for taking the time to talk with us. Unfortunately, at this time we have decided not to move forward with your application file.`);
 
-    modal.addComponents(
-        new ActionRowBuilder().addComponents(performanceInput),
-        new ActionRowBuilder().addComponents(justificationInput)
-    );
+        try { await targetUser.send({ embeds: [rejectEmbed] }); } catch {}
 
-    await interaction.showModal(modal);
+        const logsChan = await client.channels.fetch(CONFIG.NOT_HIRED_CHANNEL_ID).catch(() => null);
+        if (logsChan) {
+            const formattedTime = `Today at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+            const visualAuditEmbed = new EmbedBuilder()
+                .setColor(COLORS.danger)
+                .setTitle('🔴 Application Record Archived')
+                .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
+                .addFields(
+                    { name: '👤 Candidate', value: `${targetUser}\n(${targetUser.username})`, inline: true },
+                    { name: '🛠️ Attempted Designation', value: `\`${role.toUpperCase()}\``, inline: true }
+                )
+                .setFooter({ text: `Processed by HR Agent: ${interaction.user.username} • ${formattedTime}` });
+
+            await logsChan.send({ embeds: [visualAuditEmbed] });
+        }
+
+        await interaction.editReply({ content: '🏁 **Candidate denied. Session archived.**' });
+        await interaction.channel.setName(`[DENIED] ${targetUser.username}`);
+        await interaction.channel.setArchived(true);
+        return;
+    }
+
+    // --- CASE B: HIRE INPUT MODAL SEQUENCING ---
+    if (action === 'hire') {
+        const modal = new ModalBuilder()
+            .setCustomId(`hiremodal_${targetId}_${role}`)
+            .setTitle('📝 Enter Performance Score');
+
+        // Job code is now generated automatically, removing text input component completely
+        const scoreInput = new TextInputBuilder()
+            .setCustomId('metrics_passrate')
+            .setLabel('Pass Rate (%)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., 94%')
+            .setRequired(true);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(scoreInput));
+        await interaction.showModal(modal);
+    }
 });
 
-// Handle Report Modal Submission
+// Handle Hiring Metrics Submission & Prompt Manager Routing
 client.on('interactionCreate', async interaction => {
     if (!interaction.isModalSubmit()) return;
 
-    if (interaction.customId.startsWith('reportmodal_')) {
+    if (interaction.customId.startsWith('hiremodal_')) {
         await interaction.deferReply();
-        const [, action, targetId, role] = interaction.customId.split('_');
-        
-        const performance = interaction.fields.getTextInputValue('report_performance');
-        const justification = interaction.fields.getTextInputValue('report_justification');
+        const [, targetId, role] = interaction.customId.split('_');
 
-        // Store variables temporarily in structural system data memory cache map arrays
-        SYSTEM_CACHE.pendingReports[interaction.channel.id] = {
-            action: action === 'prehire' ? 'HIRE' : 'DENY',
+        const passRate = interaction.fields.getTextInputValue('metrics_passrate');
+        
+        // Auto-generating the small random job code right here 
+        const generatedCode = generateSmallJobCode();
+
+        SYSTEM_CACHE.pendingHires[interaction.channel.id] = {
             targetId,
             role,
-            interviewer: interaction.user,
-            performance,
-            justification,
+            jobCode: generatedCode,
+            passRate,
+            hrAgent: interaction.user,
             channel: interaction.channel
         };
 
-        // Select managers/co-signers
-        const shareEmbed = new EmbedBuilder()
+        const routingEmbed = new EmbedBuilder()
             .setColor(COLORS.warning)
-            .setTitle('📝 Select Co-Signers')
-            .setDescription('Choose the managers who need to authorize this decision file. The report text layout profile will be routed **directly to their DMs** privately.');
+            .setTitle('💼 Select Assignment Manager')
+            .setDescription(`Metrics captured successfully! (Job Code generated: \`${generatedCode}\`). Select the specific manager below who should be notified to establish contact with the new employee.`);
 
-        const userSelect = new UserSelectMenuBuilder()
-            .setCustomId(`cosignselect_${interaction.channel.id}`)
-            .setPlaceholder('Choose the managers to receive authorization logs...')
+        const managerSelect = new UserSelectMenuBuilder()
+            .setCustomId(`routepm_${interaction.channel.id}`)
+            .setPlaceholder('Choose a manager to handle contact assignment...')
             .setMinValues(1)
-            .setMaxValues(5);
+            .setMaxValues(1);
 
-        const row = new ActionRowBuilder().addComponents(userSelect);
-        await interaction.editReply({ embeds: [shareEmbed], components: [row] });
+        const row = new ActionRowBuilder().addComponents(managerSelect);
+        await interaction.editReply({ embeds: [routingEmbed], components: [row] });
     }
 });
 
-// Handle Selection of Staff Reviewers, Dispatch DMs, & Create Live Dashboard Counter
+// Finalize Assignment Routing, DM Manager, and Publish Clean Panel Card
 client.on('interactionCreate', async interaction => {
     if (!interaction.isUserSelectMenu()) return;
 
-    if (interaction.customId.startsWith('cosignselect_')) {
+    if (interaction.customId.startsWith('routepm_')) {
         await interaction.deferUpdate();
         const threadId = interaction.customId.split('_')[1];
-        const selectedStaff = interaction.users;
+        const selectedManager = interaction.users.first();
 
-        const reportData = SYSTEM_CACHE.pendingReports[threadId];
-        if (!reportData) return;
+        const hireData = SYSTEM_CACHE.pendingHires[threadId];
+        if (!hireData) return;
 
         let targetUser;
-        try { targetUser = await client.users.fetch(reportData.targetId); } catch { return; }
+        try { targetUser = await client.users.fetch(hireData.targetId); } catch { return; }
 
-        // Setup tracking arrays inside system data parameters
-        reportData.pendingSignatures = selectedStaff.map(u => u.id);
-        reportData.signedBy = [];
-        reportData.totalRequiredSignatures = selectedStaff.size;
+        if (SYSTEM_CACHE.activeInterviews > 0) SYSTEM_CACHE.activeInterviews--;
+        SYSTEM_CACHE.acceptedCount++;
 
-        // Build the standalone Evaluation Embed to send to the managers' DMs
-        const dmDocumentEmbed = new EmbedBuilder()
-            .setColor(reportData.action === 'HIRE' ? COLORS.success : COLORS.danger)
-            .setTitle(`📑 HR EVALUATION REQUEST: ${targetUser.username}`)
-            .setDescription(`**Interviewer:** ${reportData.interviewer}\n**Proposed Action:** \`${reportData.action} & CLOSE\`\n**Designation:** \`${reportData.role.toUpperCase()}\``)
+        const formattedTime = `Today at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+
+        // Build the precise panel card matched directly to your image layout
+        const fineAuditCardEmbed = new EmbedBuilder()
+            .setColor(COLORS.success)
+            .setTitle('🟢 New Talent Recruited')
+            .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
             .addFields(
-                { name: '📊 Candidate Performance Summary', value: reportData.performance },
-                { name: '⚖️ Action Justification', value: reportData.justification }
+                { name: '👤 Employee', value: `${targetUser}\n(${targetUser.username})`, inline: true },
+                { name: '🛠️ Assigned Designation', value: `\`${hireData.role.toUpperCase()}\``, inline: true },
+                { name: '🏷️ Job Code', value: `\`${hireData.jobCode}\``, inline: true },
+                { name: '📊 Pass Rate', value: `\`${hireData.passRate}\``, inline: true }
             )
-            .setFooter({ text: 'Certamen Studios Secure DM Routing System' });
+            .setFooter({ text: `Processed by HR Agent: ${hireData.hrAgent.username} • ${formattedTime}` });
 
-        let successfullySentCount = 0;
-
-        // Dispatch individual DM files to each selected manager account profile
-        for (const [_, staffUser] of selectedStaff) {
-            try {
-                const signButton = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`pvtsign_${threadId}_${staffUser.id}`)
-                        .setLabel('Approve & Sign File')
-                        .setStyle(ButtonStyle.Success)
-                        .setEmoji('🖋️')
-                );
-
-                await staffUser.send({ embeds: [dmDocumentEmbed], components: [signButton] });
-                successfullySentCount++;
-            } catch (err) {
-                await reportData.channel.send({ content: `⚠️ **Transmission Dropped:** Could not DM report to ${staffUser}. (DMs Blocked)` });
-                reportData.pendingSignatures = reportData.pendingSignatures.filter(id => id !== staffUser.id);
-                reportData.totalRequiredSignatures--;
-            }
+        // A) Push formal copy to target logs channel configuration settings
+        const logsChan = await client.channels.fetch(CONFIG.HIRED_CHANNEL_ID).catch(() => null);
+        if (logsChan) {
+            await logsChan.send({ embeds: [fineAuditCardEmbed] });
         }
 
-        if (reportData.totalRequiredSignatures === 0) {
-            await interaction.editReply({ content: '❌ **Operation Terminated:** None of the chosen co-signers were reachable via DM.', embeds: [], components: [] });
-            delete SYSTEM_CACHE.pendingReports[threadId];
-            return;
+        // B) Forward file parameters straight to chosen manager DMs
+        try {
+            const managerAlertEmbed = EmbedBuilder.from(fineAuditCardEmbed)
+                .setTitle('📥 Action Required: New Onboarding Assignment')
+                .setDescription(`Greetings **${selectedManager.username}**,\n\nYou have been designated to contact this newly accepted candidate to handle documentation layout setups.`);
+            await selectedManager.send({ embeds: [managerAlertEmbed] });
+        } catch {
+            await hireData.channel.send({ content: `⚠️ **Warning:** Could not send private alert to ${selectedManager} (DMs locked).` });
         }
 
-        // Create the Live Tracking Dashboard Frame for the room thread workspace
-        const counterDashboardEmbed = new EmbedBuilder()
-            .setColor(COLORS.warning)
-            .setTitle('⏳ Authorization Pipeline Active')
-            .setDescription(`The evaluation file has been dispatched to private manager DMs.\n\n### 📊 Live Signatures Status:\n\`🔄 0 / ${reportData.totalRequiredSignatures} Approved\``)
-            .addFields({
-                name: '🔒 Awaiting Signatures From:',
-                value: reportData.pendingSignatures.map(id => `⏳ <@${id}>`).join('\n')
-            });
+        // C) Message the Candidate their general confirmation
+        try {
+            const offerEmbed = new EmbedBuilder()
+                .setColor(COLORS.success)
+                .setTitle('🎉 Certamen Studios — Application Accepted!')
+                .setDescription(`Hello **${targetUser.displayName}**,\n\nWe are absolutely thrilled to inform you that you have been **ACCEPTED** into Certamen Studios for the position of **${hireData.role.toUpperCase()}**! A manager (<@${selectedManager.id}>) will reach out to you shortly.`);
+            await targetUser.send({ embeds: [offerEmbed] });
+        } catch {}
 
-        // Publish live dashboard counter, completely erasing the menu selection interface frame
-        const dashboardMsg = await reportData.channel.send({ embeds: [counterDashboardEmbed] });
-        reportData.dashboardMessage = dashboardMsg;
-
-        await interaction.editReply({ content: '📨 **Private authorization workflow initiated.** Tracker is live below.', embeds: [], components: [] });
-    }
-});
-
-// Handle Private DM Signature Submissions & Update Live Counters
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isButton()) return;
-
-    if (interaction.customId.startsWith('pvtsign_')) {
-        const [, threadId, assignedStaffId] = interaction.customId.split('_');
-
-        const reportData = SYSTEM_CACHE.pendingReports[threadId];
-        if (!reportData) {
-            return interaction.reply({ content: '❌ **Expired:** This authorization block tracking frame has already been processed or finalized.', ephemeral: true });
-        }
-
-        if (interaction.user.id !== assignedStaffId) return;
-
-        await interaction.deferUpdate();
-
-        reportData.signedBy.push(interaction.user.id);
-        reportData.pendingSignatures = reportData.pendingSignatures.filter(id => id !== interaction.user.id);
-
-        // Turn off button inside the individual manager's DM frame window room
-        await interaction.editReply({ content: '✅ **Signature Logged.** Your approval stamp has been added to the master file.', components: [] });
-
-        // Build and update the dynamic Live Tracking Counter Dashboard block frame inside the thread room workspace
-        const currentCount = reportData.signedBy.length;
-        const totalCount = reportData.totalRequiredSignatures;
-        const isFinished = reportData.pendingSignatures.length === 0;
-
-        const updatedCounterEmbed = new EmbedBuilder()
-            .setColor(isFinished ? COLORS.success : COLORS.warning)
-            .setTitle(isFinished ? '✅ Pipeline Clearance Approved' : '⏳ Authorization Pipeline Active')
-            .setDescription(`The evaluation file has been dispatched to private manager DMs.\n\n### 📊 Live Signatures Status:\n\`${isFinished ? '🟢' : '🔄'} ${currentCount} / ${totalCount} Approved\``);
-
-        if (!isFinished) {
-            const signedList = reportData.signedBy.map(id => `✅ <@${id}>`);
-            const pendingList = reportData.pendingSignatures.map(id => `⏳ <@${id}>`);
-            updatedCounterEmbed.addFields({ name: '🔒 Authorization List Accounts:', value: [...signedList, ...pendingList].join('\n') });
-        } else {
-            updatedCounterEmbed.addFields({ name: '🔒 Authorization List Accounts:', value: reportData.signedBy.map(id => `✅ <@${id}>`).join('\n') });
-        }
-
-        if (reportData.dashboardMessage) {
-            await reportData.dashboardMessage.edit({ embeds: [updatedCounterEmbed] }).catch(() => null);
-        }
-
-        // Trigger execution pipeline code block layout once the signature counter balances out 100%
-        if (isFinished) {
-            let targetUser;
-            try { targetUser = await client.users.fetch(reportData.targetId); } catch { return; }
-
-            if (SYSTEM_CACHE.activeInterviews > 0) SYSTEM_CACHE.activeInterviews--;
-
-            if (reportData.action === 'HIRE') {
-                SYSTEM_CACHE.acceptedCount++;
-                const offerEmbed = new EmbedBuilder()
-                    .setColor(COLORS.success)
-                    .setTitle('🎉 Certamen Studios — Application Accepted!')
-                    .setDescription(`Hello **${targetUser.displayName}**,\n\nWe are absolutely thrilled to inform you that you have been **ACCEPTED** into Certamen Studios for the position of **${reportData.role.toUpperCase()}**!`);
-
-                try { await targetUser.send({ embeds: [offerEmbed] }); } catch {}
-
-                // Send the ORIGINAL clean hired audit frame logs back to normal logs channel configuration settings
-                const logsChan = await client.channels.fetch(CONFIG.HIRED_CHANNEL_ID).catch(() => null);
-                if (logsChan) {
-                    const cleanAudit = new EmbedBuilder()
-                        .setColor(COLORS.success)
-                        .setTitle('🟢 New Talent Recruited')
-                        .addFields(
-                            { name: '👤 Employee', value: `${targetUser}`, inline: true },
-                            { name: '🛠️ Assigned Designation', value: `\`${reportData.role.toUpperCase()}\``, inline: true }
-                        );
-                    await logsChan.send({ embeds: [cleanAudit] });
-                }
-                await reportData.channel.send({ content: '🏁 **Pipeline 100% approved. Candidate successfully registered into HR logs.** Archiving...' });
-                await reportData.channel.setName(`[HIRED] ${targetUser.username}`);
-            } else {
-                SYSTEM_CACHE.rejectedCount++;
-                const rejectEmbed = new EmbedBuilder()
-                    .setColor(COLORS.danger)
-                    .setTitle('Certamen Studios — Application Status Update')
-                    .setDescription(`Hello **${targetUser.displayName}**,\n\nThank you for taking the time to talk with us. Unfortunately, at this time we have decided not to move forward with your application file.`);
-
-                try { await targetUser.send({ embeds: [rejectEmbed] }); } catch {}
-
-                // Send the ORIGINAL clean denied audit frame logs back to normal logs channel configuration settings
-                const logsChan = await client.channels.fetch(CONFIG.NOT_HIRED_CHANNEL_ID).catch(() => null);
-                if (logsChan) {
-                    const cleanAudit = new EmbedBuilder()
-                        .setColor(COLORS.danger)
-                        .setTitle('🔴 Application Record Archived')
-                        .addFields(
-                            { name: '👤 Candidate', value: `${targetUser}`, inline: true },
-                            { name: '🛠️ Attempted Designation', value: `\`${reportData.role.toUpperCase()}\``, inline: true }
-                        );
-                    await logsChan.send({ embeds: [cleanAudit] });
-                }
-                await reportData.channel.send({ content: '🏁 **Pipeline processed. Candidate file rejected.** Archiving...' });
-                await reportData.channel.setName(`[DENIED] ${targetUser.username}`);
-            }
-
-            await reportData.channel.setArchived(true);
-            delete SYSTEM_CACHE.pendingReports[threadId];
-        }
+        // Complete workspace session management
+        await hireData.channel.send({ content: `🏁 **File finalized.** Small job code generated [\`${hireData.jobCode}\`] and dispatched to manager ${selectedManager}. Archiving room...` });
+        await hireData.channel.setName(`[HIRED] ${targetUser.username}`);
+        await hireData.channel.setArchived(true);
+        
+        delete SYSTEM_CACHE.pendingHires[threadId];
+        await interaction.editReply({ content: '📨 **Success:** Profile compiled and dispatched.', embeds: [], components: [] });
     }
 });
 
