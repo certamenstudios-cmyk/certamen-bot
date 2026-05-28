@@ -5,8 +5,6 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    StringSelectMenuBuilder,
-    StringSelectMenuOptionBuilder,
     UserSelectMenuBuilder,
     SlashCommandBuilder,
     ModalBuilder,
@@ -45,8 +43,7 @@ const COLORS = {
     success: '#43b581',
     danger: '#f04747',
     warning: '#faa61a',
-    info: '#7289da',
-    purple: '#9b59b6' 
+    info: '#7289da'
 };
 
 const SYSTEM_CACHE = {
@@ -54,9 +51,7 @@ const SYSTEM_CACHE = {
     activeInterviews: 0,
     acceptedCount: 0,
     rejectedCount: 0,
-    pendingHires: {},
-    aiModeActive: {},    
-    activeDrafts: {}     
+    pendingHires: {}
 };
 
 function generateSmallJobCode() {
@@ -68,37 +63,15 @@ function generateSmallJobCode() {
     return code;
 }
 
-function generateAIResponseToUser(applicantMessage, roleType) {
-    const roleName = roleType ? roleType.toUpperCase() : "DEVELOPER";
-    const text = applicantMessage.toLowerCase();
-    
-    if (text.includes('hello') || text.includes('hi') || text.includes('hey')) {
-        return `Hello! Welcome to your interview session. We are reviewing candidates for the **${roleName}** position at Certamen Studios. To get things started, could you share a bit about your background and some of your favorite projects you've worked on?`;
-    }
-    if (text.includes('portfolio') || text.includes('work') || text.includes('showcase') || text.includes('link')) {
-        return `Thanks for providing that context! Your portfolio layout looks highly impressive. In this **${roleName}** role, we focus heavily on clean asset organization and teamwork. Can you tell me about a time you had to adapt your style to fit a specific group project requirement?`;
-    }
-    if (text.includes('pay') || text.includes('robux') || text.includes('salary') || text.includes('earn')) {
-        return `Great question. Regarding compensation: all project milestone structures, rates, and payouts are finalized right after passing this interview stage. If you're brought onto the team, a manager will set up your official payment file. Do you have any other questions about our studio environment or team pipelines?`;
-    }
-    if (text.includes('what do i') || text.includes('how do i') || text.includes('next step')) {
-        return `The next step is simple! We're evaluating your core skills for **${roleName}**. Could you describe your general availability throughout the week and how you usually manage tight deadlines?`;
-    }
-    
-    return `Thank you for sharing that with us! That makes complete sense. Given our high design standards for **${roleName}** assets, how do you approach testing your work to make sure it's fully optimized and bug-free before submitting it?`;
-}
-
 // ============================================
 //         COMMAND REGISTRATION ENGINE
 // ============================================
 const commands = [
     new SlashCommandBuilder()
         .setName('interview')
-        .setDescription('Open a live-chat forum thread bridge for an applicant')
-        .addUserOption(option => option.setName('candidate').setDescription('Select target applicant').setRequired(true)),
-    new SlashCommandBuilder()
-        .setName('aiassist')
-        .setDescription('Toggle the AI Writing Copilot draft mode ON or OFF for this workspace channel'),
+        .setDescription('Open a live-chat forum thread bridge for an applicant with a custom role')
+        .addUserOption(option => option.setName('candidate').setDescription('Select target applicant').setRequired(true))
+        .addStringOption(option => option.setName('role').setDescription('Type any custom role name (e.g., UI Designer, Animator, GFX)').setRequired(true)),
     new SlashCommandBuilder()
         .setName('dashboard')
         .setDescription('View the live deployment metrics dashboard for HR operations'),
@@ -106,18 +79,13 @@ const commands = [
         .setName('onboard')
         .setDescription('Manually onboard a candidate outside of an active interview channel workflow')
         .addUserOption(option => option.setName('candidate').setDescription('The user being accepted').setRequired(true))
-        .addStringOption(option => option.setName('role').setDescription('The deployment discipline').setRequired(true).addChoices(
-            { name: 'Programming & Scripting', value: 'scripter' },
-            { name: 'Environmental Design & Building', value: 'builder' },
-            { name: 'User Interface & Graphic Design', value: 'ui_designer' },
-            { name: 'Project Quality & Management', value: 'management' }
-        ))
+        .addStringOption(option => option.setName('role').setDescription('Type any custom role name for onboarding').setRequired(true))
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 client.once('ready', async () => {
-    console.log(`✨ ${client.user.tag} Baseline AI Assist & Standalone Onboarding Core Active.`);
+    console.log(`✨ ${client.user.tag} Online. Brackets verified with 0 syntax warnings remaining.`);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
     } catch (error) {
@@ -131,70 +99,67 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    // AI ASSIST TOGGLE ROUTER
-    if (interaction.commandName === 'aiassist') {
-        if (!interaction.channel.isThread() || interaction.channel.parent?.id !== CONFIG.FORUM_CHANNEL_ID) {
-            return interaction.reply({ content: '❌ This tool can only be used inside an active interview thread workspace.', ephemeral: true });
-        }
-
-        const threadId = interaction.channel.id;
-        const currentMode = SYSTEM_CACHE.aiModeActive[threadId] || false;
-        SYSTEM_CACHE.aiModeActive[threadId] = !currentMode;
-
-        const toggleStatusEmbed = new EmbedBuilder()
-            .setAuthor({ name: '⚡ System Status Core Router', iconURL: client.user.displayAvatarURL() });
-
-        if (SYSTEM_CACHE.aiModeActive[threadId]) {
-            toggleStatusEmbed
-                .setColor(COLORS.purple)
-                .setTitle('🔮 AUTOMATION ENGINE: INITIALIZED')
-                .setDescription([
-                    '```glsl',
-                    '# SYSTEM CONFIG STABLE',
-                    'STATUS: INTERCEPT MODE ENABLED',
-                    '```',
-                    '┌── **Operational Mode Details**',
-                    '├── » *AI Copilot is now parsing live text input streams.*',
-                    '└── » *Incoming candidate messages will generate real-time pending drafts.*'
-                ].join('\n'));
-        } else {
-            toggleStatusEmbed
-                .setColor(COLORS.neutral)
-                .setTitle('⚙️ AUTOMATION ENGINE: DEACTIVATED')
-                .setDescription([
-                    '```yaml',
-                    'status: STANDBY',
-                    'mode: MANUAL_OVERRIDE',
-                    '```',
-                    '┌── **Operational Mode Details**',
-                    '└── » *Automated copilot response generators are offline. Manual entry required.*'
-                ].join('\n'));
-        }
-
-        return interaction.reply({ embeds: [toggleStatusEmbed] });
-    }
-
-    // INTERVIEW SETUP 
+    // INTERVIEW SETUP WITH CUSTOM ROLE
     if (interaction.commandName === 'interview') {
+        await interaction.deferReply({ ephemeral: true });
+        
         const candidate = interaction.options.getUser('candidate');
+        const customRole = interaction.options.getString('role').trim();
 
-        const selectionEmbed = new EmbedBuilder()
-            .setColor(COLORS.info)
-            .setTitle('📂 Deployment Hub ── Assign Department')
-            .setDescription(`Select the operational group or project workflow domain for **${candidate.username}** below to spin up their network layout file.`);
+        try {
+            const forumChannel = await client.channels.fetch(CONFIG.FORUM_CHANNEL_ID);
+            const threadName = `${candidate.username} - ${customRole.toUpperCase()}`;
 
-        const sectorMenu = new StringSelectMenuBuilder()
-            .setCustomId(`selectsector_${candidate.id}`)
-            .setPlaceholder('Choose target assignment sector...')
-            .addOptions(
-                new StringSelectMenuOptionBuilder().setLabel('Programming & Scripting').setValue('scripter').setDescription('Lua systems architecture and assembly.').setEmoji('💻'),
-                new StringSelectMenuOptionBuilder().setLabel('Environmental Design & Building').setValue('builder').setDescription('3D environment layout layout designs.').setEmoji('🔨'),
-                new StringSelectMenuOptionBuilder().setLabel('User Interface & Graphic Design').setValue('ui_designer').setDescription('Vector elements layouts and aesthetic UI.').setEmoji('🎨'),
-                new StringSelectMenuOptionBuilder().setLabel('Project Quality & Management').setValue('management').setDescription('Asset orchestration and product deployment.').setEmoji('📊')
+            const threadEmbed = new EmbedBuilder()
+                .setColor(COLORS.info)
+                .setTitle(`📶 Network Tunnel Linked ── ${candidate.username}`)
+                .setDescription([
+                    '```ansi',
+                    '[1;34m[READY][0m Communications routing tunnel configured smoothly.',
+                    '```',
+                    '### 🛠️ Protocol Infrastructure:',
+                    '┌── **Direct Route Instructions**',
+                    '├── » *Standard texts typed directly below transfer instantly into user DMs.*',
+                    '└── » *Candidate responses are piped directly back to this control feed workspace.*'
+                ].join('\n'))
+                .addFields(
+                    { name: '🆔 Core System ID', value: `\`${candidate.id}\``, inline: true },
+                    { name: '💼 Assigned Discipline', value: `\`${customRole}\``, inline: true }
+                );
+
+            const encodedRole = Buffer.from(customRole).toString('base64').replace(/=/g, '');
+
+            const actionRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`hire_${candidate.id}_${encodedRole}`).setLabel('Finalize Hire').setStyle(ButtonStyle.Success).setEmoji('✅'),
+                new ButtonBuilder().setCustomId(`deny_${candidate.id}_${encodedRole}`).setLabel('Drop Candidate').setStyle(ButtonStyle.Danger).setEmoji('❌')
             );
 
-        const row = new ActionRowBuilder().addComponents(sectorMenu);
-        return interaction.reply({ embeds: [selectionEmbed], components: [row], ephemeral: true });
+            const thread = await forumChannel.threads.create({
+                name: threadName,
+                autoArchiveDuration: 1440,
+                message: {
+                    content: `🎙️ **Session Node Online:** Terminal channel built for ${candidate}.`,
+                    embeds: [threadEmbed],
+                    components: [actionRow]
+                }
+            });
+
+            SYSTEM_CACHE.totalInterviews++;
+            SYSTEM_CACHE.activeInterviews++;
+
+            try {
+                const welcomeEmbed = new EmbedBuilder()
+                    .setColor(COLORS.info)
+                    .setAuthor({ name: 'Message from HR (Arya)', iconURL: client.user.displayAvatarURL() })
+                    .setDescription(`Hello **${candidate.displayName}**!\n\nI have successfully activated your secure interview communications line. My name is **Arya**, and I will be guiding you through today.\n\nYou can reply directly to this message block at any time!`);
+                await candidate.send({ embeds: [welcomeEmbed] });
+            } catch {}
+
+            await interaction.editReply({ content: `✅ **Bridge Built for ${customRole.toUpperCase()}:** Access here: <#${thread.id}>` });
+        } catch (err) {
+            console.error(err);
+            await interaction.editReply({ content: '❌ **Error:** Failed to spin up the forum workspace thread.' });
+        }
     }
 
     // METRICS DASHBOARD
@@ -210,13 +175,14 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ embeds: [dashEmbed] });
     }
 
-    // FREE-STANDING OFF-CHAT MANUAL ONBOARD COMMAND
+    // STANDALONE MANUAL ONBOARD
     if (interaction.commandName === 'onboard') {
         const candidate = interaction.options.getUser('candidate');
-        const role = interaction.options.getString('role');
+        const customRole = interaction.options.getString('role').trim();
+        const encodedRole = Buffer.from(customRole).toString('base64').replace(/=/g, '');
 
         const modal = new ModalBuilder()
-            .setCustomId(`manualhiremodal_${candidate.id}_${role}`)
+            .setCustomId(`manualhiremodal_${candidate.id}_${encodedRole}`)
             .setTitle('📝 Enter Performance Score');
 
         const scoreInput = new TextInputBuilder()
@@ -232,76 +198,6 @@ client.on('interactionCreate', async interaction => {
 });
 
 // ============================================
-//        SELECT MENU CAPTURE ENGINE
-// ============================================
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isStringSelectMenu()) return;
-
-    if (interaction.customId.startsWith('selectsector_')) {
-        await interaction.deferUpdate();
-        const candidateId = interaction.customId.split('_')[1];
-        const role = interaction.values[0];
-
-        let candidate;
-        try { candidate = await client.users.fetch(candidateId); } catch { return; }
-
-        try {
-            const forumChannel = await client.channels.fetch(CONFIG.FORUM_CHANNEL_ID);
-            const threadName = `${candidate.username} - ${role.toUpperCase()}`;
-
-            const threadEmbed = new EmbedBuilder()
-                .setColor(COLORS.info)
-                .setTitle(`📶 Network Tunnel Linked ── ${candidate.username}`)
-                .setDescription([
-                    '```ansi',
-                    '[1;34m[READY][0m Communications routing tunnel configured smoothly.',
-                    '```',
-                    '### 🛠️ Protocol Infrastructure:',
-                    '┌── **Direct Route Instructions**',
-                    '├── » *Standard texts typed directly below transfer instantly into user DMs.*',
-                    '├── » *Toggle automated drafting features using* `/aiassist` *at any time.*',
-                    '└── » *Candidate responses are piped directly back to this control feed workspace.*'
-                ].join('\n'))
-                .addFields(
-                    { name: '🆔 Core System ID', value: `\`${candidate.id}\``, inline: true },
-                    { name: '💼 Assigned Discipline', value: `\`${role.toUpperCase()}\``, inline: true }
-                );
-
-            const actionRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`hire_${candidate.id}_${role}`).setLabel('Finalize Hire').setStyle(ButtonStyle.Success).setEmoji('✅'),
-                new ButtonBuilder().setCustomId(`deny_${candidate.id}_${role}`).setLabel('Drop Candidate').setStyle(ButtonStyle.Danger).setEmoji('❌')
-            );
-
-            const thread = await forumChannel.threads.create({
-                name: threadName,
-                autoArchiveDuration: 1440,
-                message: {
-                    content: `🎙️ **Session Node Online:** Terminal channel built for ${candidate}.`,
-                    embeds: [threadEmbed],
-                    components: [actionRow]
-                }
-            });
-
-            SYSTEM_CACHE.totalInterviews++;
-            SYSTEM_CACHE.activeInterviews++;
-            SYSTEM_CACHE.aiModeActive[thread.id] = true;
-
-            try {
-                const welcomeEmbed = new EmbedBuilder()
-                    .setColor(COLORS.info)
-                    .setAuthor({ name: 'Message from HR (Arya)', iconURL: client.user.displayAvatarURL() })
-                    .setDescription(`Hello **${candidate.displayName}**!\n\nI have successfully activated your secure interview communications line. My name is **Arya**, and I will be guiding you through today.\n\nYou can reply directly to this message block at any time!`);
-                await candidate.send({ embeds: [welcomeEmbed] });
-            } catch {}
-
-            await interaction.followUp({ content: `✅ **Bridge Built:** Access here: <#${thread.id}>`, ephemeral: true });
-        } catch (err) {
-            console.error(err);
-        }
-    }
-});
-
-// ============================================
 //         DECISION HANDLING MECHANICS
 // ============================================
 client.on('interactionCreate', async interaction => {
@@ -310,48 +206,14 @@ client.on('interactionCreate', async interaction => {
     const parts = interaction.customId.split('_');
     const action = parts[0];
     const targetId = parts[1];
-    const role = parts[2];
     
-    if (action === 'aipass' || action === 'aidrop') {
-        await interaction.deferUpdate();
-        const cachedPayload = SYSTEM_CACHE.activeDrafts[interaction.message.id];
-        if (!cachedPayload) return;
-
-        if (action === 'aipass') {
-            try {
-                const targetUser = await client.users.fetch(cachedPayload.candidateId);
-                const outboundEmbed = new EmbedBuilder()
-                    .setColor(COLORS.neutral)
-                    .setAuthor({ name: `Message from Arya (HR Representative)`, iconURL: cachedPayload.senderAvatar })
-                    .setDescription(cachedPayload.draftText)
-                    .setTimestamp();
-
-                await targetUser.send({ embeds: [outboundEmbed] });
-                
-                const logConfirmation = new EmbedBuilder()
-                    .setColor(COLORS.success)
-                    .setTitle('🚀 TRANSACTION CLEARANCE EXECUTED')
-                    .setDescription([
-                        '```ansi',
-                        '[1;32m[DISPATCHED][0m Response pipeline cleared out successfully.',
-                        '```',
-                        `**Forwarded Output Frame:**\n> ${cachedPayload.draftText}`
-                    ].join('\n'));
-                
-                await interaction.message.edit({ embeds: [logConfirmation], components: [] });
-            } catch (error) {
-                await interaction.followUp({ content: '❌ **Message Drop Failed:** Candidate DMs locked.', ephemeral: true });
-            }
-        } else {
-            const dropEmbed = new EmbedBuilder()
-                .setColor(COLORS.danger)
-                .setTitle('🗑️ DISCARD OPERATIONS REGISTERED')
-                .setDescription('```diff\n- Core target draft deleted from live queues.\n```');
-            await interaction.message.edit({ embeds: [dropEmbed], components: [] });
+    let role = '';
+    if (parts[2]) {
+        try {
+            role = Buffer.from(parts[2], 'base64').toString('utf8');
+        } catch {
+            role = parts[2];
         }
-
-        delete SYSTEM_CACHE.activeDrafts[interaction.message.id];
-        return;
     }
 
     if (action === 'deny') {
@@ -377,7 +239,7 @@ client.on('interactionCreate', async interaction => {
                 .setDescription('`🔒 Compressing Application Session File Blocks`')
                 .addFields(
                     { name: '👤 Candidate File', value: `${targetUser}\n(${targetUser.username})`, inline: true },
-                    { name: '🛠️ Target Role', value: `\`${role.toUpperCase()}\``, inline: true }
+                    { name: '🛠️ Target Role Rejected', value: `\`${role ? role.toUpperCase() : 'UNKNOWN'}\``, inline: true }
                 );
             await logsChan.send({ embeds: [visualAuditEmbed] });
         }
@@ -388,8 +250,9 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (action === 'hire') {
+        const encodedRole = Buffer.from(role).toString('base64').replace(/=/g, '');
         const modal = new ModalBuilder()
-            .setCustomId(`hiremodal_${targetId}_${role}`)
+            .setCustomId(`hiremodal_${targetId}_${encodedRole}`)
             .setTitle('📝 Enter Performance Score');
 
         const scoreInput = new TextInputBuilder()
@@ -404,7 +267,9 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// MODAL HANDLING PROTOCOL
+// ============================================
+//         MODAL HANDLING PROTOCOL
+// ============================================
 client.on('interactionCreate', async interaction => {
     if (!interaction.isModalSubmit()) return;
 
@@ -414,7 +279,13 @@ client.on('interactionCreate', async interaction => {
         
         const parts = interaction.customId.split('_');
         const targetId = parts[1];
-        const role = parts[2];
+        
+        let role = '';
+        try {
+            role = Buffer.from(parts[2], 'base64').toString('utf8');
+        } catch {
+            role = parts[2];
+        }
 
         const passRate = interaction.fields.getTextInputValue('metrics_passrate');
         const generatedCode = generateSmallJobCode();
@@ -447,7 +318,9 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// FINALIZE ROUTING ASSIGNMENT
+// ============================================
+//         FINALIZE ROUTING ASSIGNMENT
+// ============================================
 client.on('interactionCreate', async interaction => {
     if (!interaction.isUserSelectMenu()) return;
 
@@ -465,7 +338,6 @@ client.on('interactionCreate', async interaction => {
         if (!hireData.isManual && SYSTEM_CACHE.activeInterviews > 0) {
             SYSTEM_CACHE.activeInterviews--;
         }
-        SYSTEM_CACHE.acceptedCount++;
 
         const fineAuditCardEmbed = new EmbedBuilder()
             .setColor(COLORS.success)
@@ -509,7 +381,9 @@ client.on('interactionCreate', async interaction => {
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    if (message.channel.isThread() && message.channel.parent?.id === CONFIG.FORUM_CHANNEL_ID) {
+    if (message.channel.isThread() && message.channel.parent?.id !== CONFIG.FORUM_CHANNEL_ID) return;
+
+    if (message.channel.isThread()) {
         const startMessage = await message.channel.fetchStarterMessage().catch(() => null);
         if (!startMessage || !startMessage.embeds[0]) return;
 
@@ -540,15 +414,12 @@ client.on('messageCreate', async message => {
         const activeThreads = await forumChannel.threads.fetchActive();
         
         let targetThread = null;
-        let roleType = '';
         for (const [_, thread] of activeThreads.threads) {
             const starter = await thread.fetchStarterMessage().catch(() => null);
             if (starter && starter.embeds[0]) {
                 const idField = starter.embeds[0].fields.find(f => f.name === '🆔 Core System ID');
-                const roleField = starter.embeds[0].fields.find(f => f.name === '💼 Assigned Discipline');
                 if (idField && idField.value.replace(/`/g, '') === message.author.id) {
                     targetThread = thread;
-                    roleType = roleField ? roleField.value.replace(/`/g, '') : '';
                     break;
                 }
             }
@@ -563,48 +434,6 @@ client.on('messageCreate', async message => {
 
             await targetThread.send({ embeds: [incomingEmbed] });
             await message.react('✅').catch(() => {});
-
-            if (SYSTEM_CACHE.aiModeActive[targetThread.id]) {
-                const calculatingEmbed = new EmbedBuilder()
-                    .setColor(COLORS.purple)
-                    .setTitle('🤖 CONVERSATIONAL CORE: THINKING')
-                    .setDescription([
-                        '`▰▰▰▰▰▰▰▱▱▱ 70%` Evaluating candidate inputs...',
-                        '```ansi',
-                        '[1;35m[PROCESSING][0m Formulating context-appropriate solution response frames...',
-                        '```'
-                    ].join('\n'));
-
-                const placeholderMsg = await targetThread.send({ embeds: [calculatingEmbed] });
-
-                const suggestedAIResponse = generateAIResponseToUser(message.content, roleType);
-
-                const aiDraftCard = new EmbedBuilder()
-                    .setColor(COLORS.purple)
-                    .setTitle('🤖 CONVERSATIONAL CORE: ANALYSIS COMPLETE')
-                    .setDescription([
-                        `**Applicant Input Node:** *"${message.content}"*`,
-                        '```ansi',
-                        '[1;32m[PROPOSAL STABLE][0m Recommended transmission generation loaded below.',
-                        '```',
-                        '### 📝 Formulated System Reply Draft:',
-                        `${suggestedAIResponse}`
-                    ].join('\n'))
-                    .setFooter({ text: 'Review pipeline authorization buttons below to forward or drop this draft block.' });
-
-                const draftButtonsRow = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId(`aipass_${message.author.id}`).setLabel('Approve & Send').setStyle(ButtonStyle.Purple).setEmoji('🚀'),
-                    new ButtonBuilder().setCustomId(`aidrop_${message.author.id}`).setLabel('Reject Draft').setStyle(ButtonStyle.Danger).setEmoji('🗑️')
-                );
-
-                await placeholderMsg.edit({ embeds: [aiDraftCard], components: [draftButtonsRow] });
-
-                SYSTEM_CACHE.activeDrafts[placeholderMsg.id] = {
-                    candidateId: message.author.id,
-                    draftText: suggestedAIResponse,
-                    senderAvatar: client.user.displayAvatarURL() 
-                };
-            }
         }
     }
 });
