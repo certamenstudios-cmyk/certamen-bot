@@ -55,7 +55,7 @@ const SYSTEM_CACHE = {
 };
 
 // ============================================
-//         VISUAL VISUAL EMBED TEMPLATES
+//         VISUAL EMBED TEMPLATES
 // ============================================
 const TEMPLATES = {
     portfolio_approved: {
@@ -110,7 +110,13 @@ const commands = [
                 { name: 'Portfolio Approved (Step 1)', value: 'portfolio_approved' },
                 { name: 'Background Verification (Step 2)', value: 'background_check' }
             ))
-        .addUserOption(option => option.setName('candidate').setDescription('The candidate to address in the embed greeting').setRequired(true))
+        .addUserOption(option => option.setName('candidate').setDescription('The candidate to address in the embed greeting').setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('dm')
+        .setDescription('Send a custom direct message to a user through the bot with optional attachments')
+        .addUserOption(option => option.setName('target').setDescription('Select the user to send a DM to').setRequired(true))
+        .addStringOption(option => option.setName('message').setDescription('Type your message content here').setRequired(true))
+        .addAttachmentOption(option => option.setName('image').setDescription('Upload an optional image/screenshot').setRequired(false))
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
@@ -129,6 +135,54 @@ client.once('ready', async () => {
 // ============================================
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
+
+    // DIRECT MESSAGE (DM) SYSTEM
+    if (interaction.commandName === 'dm') {
+        await interaction.deferReply({ ephemeral: true });
+
+        const targetUser = interaction.options.getUser('target');
+        const messageText = interaction.options.getString('message');
+        const imageAttachment = interaction.options.getAttachment('image');
+
+        const dmEmbed = new EmbedBuilder()
+            .setColor(COLORS.info)
+            .setAuthor({ name: 'Message from Certamen Studios HR', iconURL: interaction.guild?.iconURL() || client.user.displayAvatarURL() })
+            .setDescription(messageText)
+            .setTimestamp();
+
+        // Attach image if provided
+        if (imageAttachment) {
+            // Basic confirmation that the uploaded file type is an image
+            if (imageAttachment.contentType?.startsWith('image/')) {
+                dmEmbed.setImage(imageAttachment.url);
+            } else {
+                return interaction.editReply({ content: '❌ **Error:** Attached file must be a valid image type (PNG, JPEG, GIF).' });
+            }
+        }
+
+        try {
+            await targetUser.send({ embeds: [dmEmbed] });
+            
+            const logsEmbed = new EmbedBuilder()
+                .setColor(COLORS.success)
+                .setTitle('✉️ DM Dispatched Successfully')
+                .addFields(
+                    { name: '👤 Recipient', value: `${targetUser} (\`${targetUser.id}\`)`, inline: true },
+                    { name: '✍️ Sent By', value: `${interaction.user}`, inline: true },
+                    { name: '📝 Message', value: messageText }
+                );
+
+            if (imageAttachment) {
+                logsEmbed.setImage(imageAttachment.url);
+            }
+
+            await interaction.editReply({ embeds: [logsEmbed] });
+        } catch (error) {
+            console.error(error);
+            await interaction.editReply({ content: `❌ **Failed to send DM:** ${targetUser.username} has closed their direct messages or blocked the bot.` });
+        }
+        return;
+    }
 
     // TEMPLATE DISPATCH LAYER
     if (interaction.commandName === 'sendtemplate') {
