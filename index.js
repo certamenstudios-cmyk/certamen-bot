@@ -32,6 +32,7 @@ const client = new Client({
 //         STUDIO CONFIGURATION CORE
 // ============================================
 const CONFIG = {
+    GUILD_ID: '1508151252561694861',             // ✅ Configured to your exact server
     HIRED_CHANNEL_ID: '1508153883669827757',
     NOT_HIRED_CHANNEL_ID: '1508153941521858680',
     FORUM_CHANNEL_ID: '1509210757248581782', 
@@ -122,9 +123,14 @@ const commands = [
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 client.once('ready', async () => {
-    console.log(`✨ ${client.user.tag} Online. All systems fully optimized with 0 development errors.`);
+    console.log(`✨ ${client.user.tag} Online. Syncing application commands...`);
     try {
-        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+        // Registers instantly to your server directly to bypass local client cache wait times
+        await rest.put(
+            Routes.applicationGuildCommands(client.user.id, CONFIG.GUILD_ID), 
+            { body: commands }
+        );
+        console.log('✅ Instant guild deployment completed successfully to server 1508151252561694861.');
     } catch (error) {
         console.error('❌ Sync failed:', error);
     }
@@ -152,7 +158,6 @@ client.on('interactionCreate', async interaction => {
 
         // Attach image if provided
         if (imageAttachment) {
-            // Basic confirmation that the uploaded file type is an image
             if (imageAttachment.contentType?.startsWith('image/')) {
                 dmEmbed.setImage(imageAttachment.url);
             } else {
