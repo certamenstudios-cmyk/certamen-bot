@@ -35,15 +35,16 @@ const CONFIG = {
     GUILD_ID: '1508151252561694861',             
     HIRED_CHANNEL_ID: '1508153883669827757',
     NOT_HIRED_CHANNEL_ID: '1508153941521858680',
-    FORUM_CHANNEL_ID: '1509210757248581782', 
+    FORUM_CHANNEL_ID: '1509210757248581782',      // Base forum channel for interviews
+    DM_FORUM_CHANNEL_ID: '1509987579020447847',   // ✅ Auto-target for bidirectional DM Sessions
     MANAGEMENT_ROLE_ID: 'YOUR_STAFF_ROLE_ID_HERE'   
 };
 
 const COLORS = {
     neutral: '#2c2f33',
-    success: '#43b581',  // Green side banner matching image 2
+    success: '#43b581',  
     danger: '#f04747',
-    warning: '#faa61a',  // Amber side banner matching image 1
+    warning: '#faa61a',  
     info: '#7289da'
 };
 
@@ -113,11 +114,19 @@ const commands = [
             ))
         .addUserOption(option => option.setName('candidate').setDescription('The candidate to address in the embed greeting').setRequired(true)),
     new SlashCommandBuilder()
-        .setName('dm')
-        .setDescription('Send a custom direct message to a user through the bot with optional attachments')
+        .setName('dm_session')
+        .setDescription('Start a bidirectional DM session thread inside the dedicated forum channel')
+        .addUserOption(option => option.setName('target').setDescription('Select the user to open a live stream with').setRequired(true))
+        .addStringOption(option => option.setName('message').setDescription('Type your introductory message').setRequired(true))
+        .addAttachmentOption(option => option.setName('image').setDescription('Upload an optional image').setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('dm_one_way')
+        .setDescription('Send an unmonitored one-way DM message card and log it inside a custom channel')
         .addUserOption(option => option.setName('target').setDescription('Select the user to send a DM to').setRequired(true))
-        .addStringOption(option => option.setName('message').setDescription('Type your message content here').setRequired(true))
-        .addAttachmentOption(option => option.setName('image').setDescription('Upload an optional image/screenshot').setRequired(false))
+        .addStringOption(option => option.setName('message').setDescription('Type your message content').setRequired(true))
+        .addChannelOption(option => option.setName('log_channel').setDescription('Select the channel to log the copy card inside').setRequired(true)
+            .addChannelTypes(ChannelType.GuildText))
+        .addAttachmentOption(option => option.setName('image').setDescription('Upload an optional image').setRequired(false))
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
@@ -140,13 +149,12 @@ client.once('ready', async () => {
 // ============================================
 client.on('interactionCreate', async interaction => {
     
-    // ----------------------------------------
-    // HANDLE CHAT INPUT SLASH COMMANDS
-    // ----------------------------------------
     if (interaction.isChatInputCommand()) {
         
-        // DIRECT MESSAGE (DM) SYSTEM
-        if (interaction.commandName === 'dm') {
+        // ----------------------------------------
+        // 1. BIDIRECTIONAL DM SESSION (WITH LIVE THREAD REPLIES)
+        // ----------------------------------------
+        if (interaction.commandName === 'dm_session') {
             await interaction.deferReply({ ephemeral: true });
 
             const targetUser = interaction.options.getUser('target');
@@ -163,30 +171,102 @@ client.on('interactionCreate', async interaction => {
                 if (imageAttachment.contentType?.startsWith('image/')) {
                     dmEmbed.setImage(imageAttachment.url);
                 } else {
-                    return interaction.editReply({ content: '❌ **Error:** Attached file must be a valid image type (PNG, JPEG, GIF).' });
+                    return interaction.editReply({ content: '❌ **Error:** Attached file must be a valid image type.' });
                 }
             }
 
+            try { await targetUser.send({ embeds: [dmEmbed] }); } catch (error) {
+                return interaction.editReply({ content: `❌ **Failed to send DM:** ${targetUser.username} has closed their direct messages.` });
+            }
+
             try {
-                await targetUser.send({ embeds: [dmEmbed] });
-                
-                const logsEmbed = new EmbedBuilder()
+                const dmForumChannel = await client.channels.fetch(CONFIG.DM_FORUM_CHANNEL_ID);
+                const threadName = `[DM] ${targetUser.username}`;
+
+                const threadEmbed = new EmbedBuilder()
                     .setColor(COLORS.success)
-                    .setTitle('✉️ DM Dispatched Successfully')
+                    .setTitle(`📶 Communication Node Connected ── ${targetUser.username}`)
+                    .setDescription([
+                        '```ansi',
+                        '[1;32m[CONNECTED][0m Direct DM pipeline node deployed successfully.',
+                        '```',
+                        '### 📝 Transmission Rules:',
+                        '┌── **Live Tunnel Info**',
+                        '├── » *Anything typed right here routes instantly back to their DMs.*',
+                        '└── » *Any responses they send to the bot will update right here.*'
+                    ].join('\n'))
                     .addFields(
-                        { name: '👤 Recipient', value: `${targetUser} (\`${targetUser.id}\`)`, inline: true },
-                        { name: '✍️ Sent By', value: `${interaction.user}`, inline: true },
-                        { name: '📝 Message', value: messageText }
+                        { name: '🆔 Core System ID', value: `\`${targetUser.id}\``, inline: true },
+                        { name: '✉️ Original Transmission', value: messageText.length > 500 ? `${messageText.slice(0, 500)}...` : messageText }
                     );
 
-                if (imageAttachment) {
-                    logsEmbed.setImage(imageAttachment.url);
-                }
+                if (imageAttachment) threadEmbed.setImage(imageAttachment.url);
 
-                await interaction.editReply({ embeds: [logsEmbed] });
-            } catch (error) {
-                console.error(error);
-                await interaction.editReply({ content: `❌ **Failed to send DM:** ${targetUser.username} has closed their direct messages or blocked the bot.` });
+                const thread = await dmForumChannel.threads.create({
+                    name: threadName,
+                    autoArchiveDuration: 1440,
+                    message: {
+                        content: `🎯 **DM Log Stream** established for ${targetUser}.`,
+                        embeds: [threadEmbed]
+                    }
+                });
+
+                await interaction.editReply({ content: `✅ **Live Session Tunnel Spawned:** Access here: <#${thread.id}>` });
+            } catch (err) {
+                console.error(err);
+                await interaction.editReply({ content: '⚠️ **DM Sent**, but failed to auto-generate the tracking thread in the forum. Verify bot permissions.' });
+            }
+            return;
+        }
+
+        // ----------------------------------------
+        // 2. ONE-WAY DM (NO REPLIES, CUSTOM CHANNEL LOG CARD)
+        // ----------------------------------------
+        if (interaction.commandName === 'dm_one_way') {
+            await interaction.deferReply({ ephemeral: true });
+
+            const targetUser = interaction.options.getUser('target');
+            const messageText = interaction.options.getString('message');
+            const logChannel = interaction.options.getChannel('log_channel');
+            const imageAttachment = interaction.options.getAttachment('image');
+
+            const dmEmbed = new EmbedBuilder()
+                .setColor(COLORS.info)
+                .setAuthor({ name: 'Message from Certamen Studios HR', iconURL: interaction.guild?.iconURL() || client.user.displayAvatarURL() })
+                .setDescription(messageText)
+                .setTimestamp();
+
+            if (imageAttachment) {
+                if (imageAttachment.contentType?.startsWith('image/')) {
+                    dmEmbed.setImage(imageAttachment.url);
+                } else {
+                    return interaction.editReply({ content: '❌ **Error:** Attached file must be a valid image type.' });
+                }
+            }
+
+            try { await targetUser.send({ embeds: [dmEmbed] }); } catch (error) {
+                return interaction.editReply({ content: `❌ **Failed to send DM:** ${targetUser.username} has closed their direct messages.` });
+            }
+
+            try {
+                const oneWayLogEmbed = new EmbedBuilder()
+                    .setColor(COLORS.neutral)
+                    .setTitle('📭 One-Way Outbound Message Dispatched')
+                    .setDescription('`⚠️ Note: Replies are completely unmonitored for this message block.`')
+                    .addFields(
+                        { name: '👤 Recipient', value: `${targetUser} (\`${targetUser.id}\`)`, inline: true },
+                        { name: '✍️ Authorized Agent', value: `${interaction.user}`, inline: true },
+                        { name: '📝 Content Sent', value: messageText }
+                    )
+                    .setTimestamp();
+
+                if (imageAttachment) oneWayLogEmbed.setImage(imageAttachment.url);
+
+                await logChannel.send({ embeds: [oneWayLogEmbed] });
+                await interaction.editReply({ content: `✅ **One-Way DM Sent Successfully!** Copy receipt logged inside <#${logChannel.id}>.` });
+            } catch (err) {
+                console.error(err);
+                await interaction.editReply({ content: '⚠️ **DM Sent**, but could not log receipt to that channel. Check bot permissions.' });
             }
             return;
         }
@@ -197,9 +277,7 @@ client.on('interactionCreate', async interaction => {
             const candidate = interaction.options.getUser('candidate');
             
             const selectedTemplate = TEMPLATES[templateKey];
-            if (!selectedTemplate) {
-                return interaction.reply({ content: '❌ Selected template configuration error.', ephemeral: true });
-            }
+            if (!selectedTemplate) return interaction.reply({ content: '❌ Selected template error.', ephemeral: true });
 
             const now = new Date();
             const timestampString = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}, ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -221,10 +299,7 @@ client.on('interactionCreate', async interaction => {
                 components.push(new ActionRowBuilder().addComponents(linkButton));
             }
 
-            await interaction.reply({
-                embeds: [embed],
-                components: components.length > 0 ? components : undefined
-            });
+            await interaction.reply({ embeds: [embed], components: components.length > 0 ? components : undefined });
             return;
         }
 
@@ -338,11 +413,7 @@ client.on('interactionCreate', async interaction => {
         
         let role = '';
         if (parts[2]) {
-            try {
-                role = Buffer.from(parts[2], 'base64').toString('utf8');
-            } catch {
-                role = parts[2];
-            }
+            try { role = Buffer.from(parts[2], 'base64').toString('utf8'); } catch { role = parts[2]; }
         }
 
         if (action === 'deny') {
@@ -405,20 +476,14 @@ client.on('interactionCreate', async interaction => {
         if (interaction.customId.startsWith('hiremodal_') || interaction.customId.startsWith('manualhiremodal_')) {
             await interaction.deferReply();
             const isManual = interaction.customId.startsWith('manualhiremodal_');
-            
             const parts = interaction.customId.split('_');
             const targetId = parts[1];
             
             let role = '';
-            try {
-                role = Buffer.from(parts[2], 'base64').toString('utf8');
-            } catch {
-                role = parts[2];
-            }
+            try { role = Buffer.from(parts[2], 'base64').toString('utf8'); } catch { role = parts[2]; }
 
             const passRate = interaction.fields.getTextInputValue('metrics_passrate');
             const generatedCode = generateSmallJobCode();
-
             const cacheKey = isManual ? `manual_${interaction.id}` : interaction.channel.id;
 
             SYSTEM_CACHE.pendingHires[cacheKey] = {
@@ -511,11 +576,15 @@ client.on('interactionCreate', async interaction => {
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    if (message.channel.isThread() && message.channel.parent?.id !== CONFIG.FORUM_CHANNEL_ID) return;
-
+    // ----------------------------------------
+    // SERVER-SIDE TUNNEL TRANSFERS (OUTBOUND)
+    // ----------------------------------------
     if (message.channel.isThread()) {
         const startMessage = await message.channel.fetchStarterMessage().catch(() => null);
         if (!startMessage || !startMessage.embeds[0]) return;
+
+        // Verify this thread belongs to either our standard Interview Forum or our Custom DM Forum
+        if (message.channel.parent?.id !== CONFIG.FORUM_CHANNEL_ID && message.channel.parent?.id !== CONFIG.DM_FORUM_CHANNEL_ID) return;
 
         const idField = startMessage.embeds[0].fields.find(f => f.name === '🆔 Core System ID');
         if (!idField) return;
@@ -524,46 +593,69 @@ client.on('messageCreate', async message => {
 
         try {
             const targetUser = await client.users.fetch(targetUserId);
+            
             const outboundEmbed = new EmbedBuilder()
                 .setColor(COLORS.neutral)
                 .setAuthor({ name: `Message from Arya (HR Representative)`, iconURL: message.author.displayAvatarURL() })
                 .setDescription(message.content)
                 .setTimestamp();
 
+            if (message.attachments.size > 0) {
+                const firstAttach = message.attachments.first();
+                if (firstAttach.contentType?.startsWith('image/')) outboundEmbed.setImage(firstAttach.url);
+            }
+
             await targetUser.send({ embeds: [outboundEmbed] });
             await message.react('✉️').catch(() => {});
         } catch (error) {
-            await message.reply({ content: '❌ **Message Dropped:** DMs blocked.' });
+            await message.reply({ content: '❌ **Message Dropped:** DMs closed or bot blocked.' });
         }
+        return;
     }
 
+    // ----------------------------------------
+    // DIRECT MESSAGE INTERCEPT CONTROLLER (INBOUND)
+    // ----------------------------------------
     if (message.channel.type === ChannelType.DM) {
-        const forumChannel = await client.channels.fetch(CONFIG.FORUM_CHANNEL_ID).catch(() => null);
-        if (!forumChannel) return;
+        try {
+            const guilds = await client.guilds.fetch();
+            const targetedGuild = await guilds.get(CONFIG.GUILD_ID)?.fetch();
+            if (!targetedGuild) return;
 
-        const activeThreads = await forumChannel.threads.fetchActive();
-        
-        let targetThread = null;
-        for (const [_, thread] of activeThreads.threads) {
-            const starter = await thread.fetchStarterMessage().catch(() => null);
-            if (starter && starter.embeds[0]) {
-                const idField = starter.embeds[0].fields.find(f => f.name === '🆔 Core System ID');
-                if (idField && idField.value.replace(/`/g, '') === message.author.id) {
-                    targetThread = thread;
-                    break;
+            const activeThreadsData = await targetedGuild.channels.fetchActiveThreads();
+            let matchedThread = null;
+
+            for (const [_, thread] of activeThreadsData.threads) {
+                // Only read active tracking streams belonging to our interview forum or DM session forum
+                if (thread.parent?.id !== CONFIG.FORUM_CHANNEL_ID && thread.parent?.id !== CONFIG.DM_FORUM_CHANNEL_ID) continue;
+
+                const starter = await thread.fetchStarterMessage().catch(() => null);
+                if (starter && starter.embeds[0]) {
+                    const idField = starter.embeds[0].fields.find(f => f.name === '🆔 Core System ID');
+                    if (idField && idField.value.replace(/`/g, '') === message.author.id) {
+                        matchedThread = thread;
+                        break;
+                    }
                 }
             }
-        }
 
-        if (targetThread) {
-            const incomingEmbed = new EmbedBuilder()
-                .setColor(COLORS.success)
-                .setAuthor({ name: `${message.author.username} (Applicant)`, iconURL: message.author.displayAvatarURL() })
-                .setDescription(message.content)
-                .setTimestamp();
+            if (matchedThread) {
+                const incomingEmbed = new EmbedBuilder()
+                    .setColor(COLORS.success)
+                    .setAuthor({ name: `${message.author.username} (Response Received)`, iconURL: message.author.displayAvatarURL() })
+                    .setDescription(message.content)
+                    .setTimestamp();
 
-            await targetThread.send({ embeds: [incomingEmbed] });
-            await message.react('✅').catch(() => {});
+                if (message.attachments.size > 0) {
+                    const incomingAttach = message.attachments.first();
+                    if (incomingAttach.contentType?.startsWith('image/')) incomingEmbed.setImage(incomingAttach.url);
+                }
+
+                await matchedThread.send({ embeds: [incomingEmbed] });
+                await message.react('✅').catch(() => {});
+            }
+        } catch (err) {
+            console.error('Error handling incoming DM packet:', err);
         }
     }
 });
