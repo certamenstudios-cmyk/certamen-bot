@@ -32,7 +32,7 @@ const client = new Client({
 //         STUDIO CONFIGURATION CORE
 // ============================================
 const CONFIG = {
-    GUILD_ID: '1508151252561694861',             // ✅ Configured to your exact server
+    GUILD_ID: '1508151252561694861',             
     HIRED_CHANNEL_ID: '1508153883669827757',
     NOT_HIRED_CHANNEL_ID: '1508153941521858680',
     FORUM_CHANNEL_ID: '1509210757248581782', 
@@ -125,7 +125,6 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 client.once('ready', async () => {
     console.log(`✨ ${client.user.tag} Online. Syncing application commands...`);
     try {
-        // Registers instantly to your server directly to bypass local client cache wait times
         await rest.put(
             Routes.applicationGuildCommands(client.user.id, CONFIG.GUILD_ID), 
             { body: commands }
@@ -137,368 +136,372 @@ client.once('ready', async () => {
 });
 
 // ============================================
-//          INTERACTION CORE CONTROLLER
+//       CENTRAL INTERACTION ENGINE CORE
 // ============================================
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
+    
+    // ----------------------------------------
+    // HANDLE CHAT INPUT SLASH COMMANDS
+    // ----------------------------------------
+    if (interaction.isChatInputCommand()) {
+        
+        // DIRECT MESSAGE (DM) SYSTEM
+        if (interaction.commandName === 'dm') {
+            await interaction.deferReply({ ephemeral: true });
 
-    // DIRECT MESSAGE (DM) SYSTEM
-    if (interaction.commandName === 'dm') {
-        await interaction.deferReply({ ephemeral: true });
+            const targetUser = interaction.options.getUser('target');
+            const messageText = interaction.options.getString('message');
+            const imageAttachment = interaction.options.getAttachment('image');
 
-        const targetUser = interaction.options.getUser('target');
-        const messageText = interaction.options.getString('message');
-        const imageAttachment = interaction.options.getAttachment('image');
-
-        const dmEmbed = new EmbedBuilder()
-            .setColor(COLORS.info)
-            .setAuthor({ name: 'Message from Certamen Studios HR', iconURL: interaction.guild?.iconURL() || client.user.displayAvatarURL() })
-            .setDescription(messageText)
-            .setTimestamp();
-
-        // Attach image if provided
-        if (imageAttachment) {
-            if (imageAttachment.contentType?.startsWith('image/')) {
-                dmEmbed.setImage(imageAttachment.url);
-            } else {
-                return interaction.editReply({ content: '❌ **Error:** Attached file must be a valid image type (PNG, JPEG, GIF).' });
-            }
-        }
-
-        try {
-            await targetUser.send({ embeds: [dmEmbed] });
-            
-            const logsEmbed = new EmbedBuilder()
-                .setColor(COLORS.success)
-                .setTitle('✉️ DM Dispatched Successfully')
-                .addFields(
-                    { name: '👤 Recipient', value: `${targetUser} (\`${targetUser.id}\`)`, inline: true },
-                    { name: '✍️ Sent By', value: `${interaction.user}`, inline: true },
-                    { name: '📝 Message', value: messageText }
-                );
+            const dmEmbed = new EmbedBuilder()
+                .setColor(COLORS.info)
+                .setAuthor({ name: 'Message from Certamen Studios HR', iconURL: interaction.guild?.iconURL() || client.user.displayAvatarURL() })
+                .setDescription(messageText)
+                .setTimestamp();
 
             if (imageAttachment) {
-                logsEmbed.setImage(imageAttachment.url);
+                if (imageAttachment.contentType?.startsWith('image/')) {
+                    dmEmbed.setImage(imageAttachment.url);
+                } else {
+                    return interaction.editReply({ content: '❌ **Error:** Attached file must be a valid image type (PNG, JPEG, GIF).' });
+                }
             }
 
-            await interaction.editReply({ embeds: [logsEmbed] });
-        } catch (error) {
-            console.error(error);
-            await interaction.editReply({ content: `❌ **Failed to send DM:** ${targetUser.username} has closed their direct messages or blocked the bot.` });
-        }
-        return;
-    }
+            try {
+                await targetUser.send({ embeds: [dmEmbed] });
+                
+                const logsEmbed = new EmbedBuilder()
+                    .setColor(COLORS.success)
+                    .setTitle('✉️ DM Dispatched Successfully')
+                    .addFields(
+                        { name: '👤 Recipient', value: `${targetUser} (\`${targetUser.id}\`)`, inline: true },
+                        { name: '✍️ Sent By', value: `${interaction.user}`, inline: true },
+                        { name: '📝 Message', value: messageText }
+                    );
 
-    // TEMPLATE DISPATCH LAYER
-    if (interaction.commandName === 'sendtemplate') {
-        const templateKey = interaction.options.getString('template');
-        const candidate = interaction.options.getUser('candidate');
-        
-        const selectedTemplate = TEMPLATES[templateKey];
-        if (!selectedTemplate) {
-            return interaction.reply({ content: '❌ Selected template configuration error.', ephemeral: true });
-        }
-
-        const now = new Date();
-        const timestampString = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}, ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-        const embed = new EmbedBuilder()
-            .setAuthor({ name: 'Certamen Studios — Core Processing Systems', iconURL: interaction.guild?.iconURL() || client.user.displayAvatarURL() })
-            .setColor(selectedTemplate.color)
-            .setTitle(selectedTemplate.title)
-            .setDescription(selectedTemplate.description(candidate.toString()))
-            .setFooter({ text: `${selectedTemplate.footer} • ${timestampString}` });
-
-        const components = [];
-        if (selectedTemplate.hasButton) {
-            const linkButton = new ButtonBuilder()
-                .setLabel('Open Onboarding Website')
-                .setStyle(ButtonStyle.Link)
-                .setURL('https://emersondhaba.my.canva.site/certamen');
-            
-            components.push(new ActionRowBuilder().addComponents(linkButton));
-        }
-
-        await interaction.reply({
-            embeds: [embed],
-            components: components.length > 0 ? components : undefined
-        });
-        return;
-    }
-
-    // INTERVIEW SETUP WITH CUSTOM ROLE
-    if (interaction.commandName === 'interview') {
-        await interaction.deferReply({ ephemeral: true });
-        
-        const candidate = interaction.options.getUser('candidate');
-        const customRole = interaction.options.getString('role').trim();
-
-        try {
-            const forumChannel = await client.channels.fetch(CONFIG.FORUM_CHANNEL_ID);
-            const threadName = `${candidate.username} - ${customRole.toUpperCase()}`;
-
-            const threadEmbed = new EmbedBuilder()
-                .setColor(COLORS.info)
-                .setTitle(`📶 Network Tunnel Linked ── ${candidate.username}`)
-                .setDescription([
-                    '```ansi',
-                    '[1;34m[READY][0m Communications routing tunnel configured smoothly.',
-                    '```',
-                    '### 🛠️ Protocol Infrastructure:',
-                    '┌── **Direct Route Instructions**',
-                    '├── » *Standard texts typed directly below transfer instantly into user DMs.*',
-                    '└── » *Candidate responses are piped directly back to this control feed workspace.*'
-                ].join('\n'))
-                .addFields(
-                    { name: '🆔 Core System ID', value: `\`${candidate.id}\``, inline: true },
-                    { name: '💼 Assigned Discipline', value: `\`${customRole}\``, inline: true }
-                );
-
-            const encodedRole = Buffer.from(customRole).toString('base64').replace(/=/g, '');
-
-            const actionRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`hire_${candidate.id}_${encodedRole}`).setLabel('Finalize Hire').setStyle(ButtonStyle.Success).setEmoji('✅'),
-                new ButtonBuilder().setCustomId(`deny_${candidate.id}_${encodedRole}`).setLabel('Drop Candidate').setStyle(ButtonStyle.Danger).setEmoji('❌')
-            );
-
-            const thread = await forumChannel.threads.create({
-                name: threadName,
-                autoArchiveDuration: 1440,
-                message: {
-                    content: `🎙️ **Session Node Online:** Terminal channel built for ${candidate}.`,
-                    embeds: [threadEmbed],
-                    components: [actionRow]
+                if (imageAttachment) {
+                    logsEmbed.setImage(imageAttachment.url);
                 }
-            });
 
-            SYSTEM_CACHE.totalInterviews++;
-            SYSTEM_CACHE.activeInterviews++;
+                await interaction.editReply({ embeds: [logsEmbed] });
+            } catch (error) {
+                console.error(error);
+                await interaction.editReply({ content: `❌ **Failed to send DM:** ${targetUser.username} has closed their direct messages or blocked the bot.` });
+            }
+            return;
+        }
+
+        // TEMPLATE DISPATCH LAYER
+        if (interaction.commandName === 'sendtemplate') {
+            const templateKey = interaction.options.getString('template');
+            const candidate = interaction.options.getUser('candidate');
+            
+            const selectedTemplate = TEMPLATES[templateKey];
+            if (!selectedTemplate) {
+                return interaction.reply({ content: '❌ Selected template configuration error.', ephemeral: true });
+            }
+
+            const now = new Date();
+            const timestampString = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}, ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+            const embed = new EmbedBuilder()
+                .setAuthor({ name: 'Certamen Studios — Core Processing Systems', iconURL: interaction.guild?.iconURL() || client.user.displayAvatarURL() })
+                .setColor(selectedTemplate.color)
+                .setTitle(selectedTemplate.title)
+                .setDescription(selectedTemplate.description(candidate.toString()))
+                .setFooter({ text: `${selectedTemplate.footer} • ${timestampString}` });
+
+            const components = [];
+            if (selectedTemplate.hasButton) {
+                const linkButton = new ButtonBuilder()
+                    .setLabel('Open Onboarding Website')
+                    .setStyle(ButtonStyle.Link)
+                    .setURL('https://emersondhaba.my.canva.site/certamen');
+                
+                components.push(new ActionRowBuilder().addComponents(linkButton));
+            }
+
+            await interaction.reply({
+                embeds: [embed],
+                components: components.length > 0 ? components : undefined
+            });
+            return;
+        }
+
+        // INTERVIEW SETUP WITH CUSTOM ROLE
+        if (interaction.commandName === 'interview') {
+            await interaction.deferReply({ ephemeral: true });
+            
+            const candidate = interaction.options.getUser('candidate');
+            const customRole = interaction.options.getString('role').trim();
 
             try {
-                const welcomeEmbed = new EmbedBuilder()
+                const forumChannel = await client.channels.fetch(CONFIG.FORUM_CHANNEL_ID);
+                const threadName = `${candidate.username} - ${customRole.toUpperCase()}`;
+
+                const threadEmbed = new EmbedBuilder()
                     .setColor(COLORS.info)
-                    .setAuthor({ name: 'Message from HR (Arya)', iconURL: client.user.displayAvatarURL() })
-                    .setDescription(`Hello **${candidate.displayName}**!\n\nI have successfully activated your secure interview communications line. My name is **Arya**, and I will be guiding you through today.\n\nYou can reply directly to this message block at any time!`);
-                await candidate.send({ embeds: [welcomeEmbed] });
-            } catch {}
+                    .setTitle(`📶 Network Tunnel Linked ── ${candidate.username}`)
+                    .setDescription([
+                        '```ansi',
+                        '[1;34m[READY][0m Communications routing tunnel configured smoothly.',
+                        '```',
+                        '### 🛠️ Protocol Infrastructure:',
+                        '┌── **Direct Route Instructions**',
+                        '├── » *Standard texts typed directly below transfer instantly into user DMs.*',
+                        '└── » *Candidate responses are piped directly back to this control feed workspace.*'
+                    ].join('\n'))
+                    .addFields(
+                        { name: '🆔 Core System ID', value: `\`${candidate.id}\``, inline: true },
+                        { name: '💼 Assigned Discipline', value: `\`${customRole}\``, inline: true }
+                    );
 
-            await interaction.editReply({ content: `✅ **Bridge Built for ${customRole.toUpperCase()}:** Access here: <#${thread.id}>` });
-        } catch (err) {
-            console.error(err);
-            await interaction.editReply({ content: '❌ **Error:** Failed to spin up the forum workspace thread.' });
-        }
-    }
+                const encodedRole = Buffer.from(customRole).toString('base64').replace(/=/g, '');
 
-    // METRICS DASHBOARD
-    if (interaction.commandName === 'dashboard') {
-        const dashEmbed = new EmbedBuilder()
-            .setColor(COLORS.neutral)
-            .setTitle('🖥️ Operational Performance Analytics')
-            .setDescription('`📊 Live Network Diagnostics Log` ── Updates Active')
-            .addFields(
-                { name: '📥 Active Message Channels', value: `\`▰▰▰▰▱▱▱▱▱▱ 40%\`\n» **${SYSTEM_CACHE.activeInterviews}** Active Sessions`, inline: true },
-                { name: '📦 Cumulative Processed Logs', value: `\`▰▰▰▰▰▰▰▱▱▱ 70%\`\n» **${SYSTEM_CACHE.totalInterviews}** Total Streams`, inline: true }
-            );
-        return interaction.reply({ embeds: [dashEmbed] });
-    }
-
-    // STANDALONE MANUAL ONBOARD
-    if (interaction.commandName === 'onboard') {
-        const candidate = interaction.options.getUser('candidate');
-        const customRole = interaction.options.getString('role').trim();
-        const encodedRole = Buffer.from(customRole).toString('base64').replace(/=/g, '');
-
-        const modal = new ModalBuilder()
-            .setCustomId(`manualhiremodal_${candidate.id}_${encodedRole}`)
-            .setTitle('📝 Enter Performance Score');
-
-        const scoreInput = new TextInputBuilder()
-            .setCustomId('metrics_passrate')
-            .setLabel('Pass Rate (%)')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('e.g., 95%')
-            .setRequired(true);
-
-        modal.addComponents(new ActionRowBuilder().addComponents(scoreInput));
-        await interaction.showModal(modal);
-    }
-});
-
-// ============================================
-//         DECISION HANDLING MECHANICS
-// ============================================
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isButton()) return;
-
-    const parts = interaction.customId.split('_');
-    const action = parts[0];
-    const targetId = parts[1];
-    
-    let role = '';
-    if (parts[2]) {
-        try {
-            role = Buffer.from(parts[2], 'base64').toString('utf8');
-        } catch {
-            role = parts[2];
-        }
-    }
-
-    if (action === 'deny') {
-        await interaction.deferReply({ ephemeral: true });
-        let targetUser;
-        try { targetUser = await client.users.fetch(targetId); } catch { return; }
-
-        if (SYSTEM_CACHE.activeInterviews > 0) SYSTEM_CACHE.activeInterviews--;
-        SYSTEM_CACHE.rejectedCount++;
-
-        const rejectEmbed = new EmbedBuilder()
-            .setColor(COLORS.danger)
-            .setTitle('Certamen Studios — Application Status Update')
-            .setDescription(`Hello **${targetUser.displayName}**,\n\nThank you for taking the time to talk with us. Unfortunately, at this time we have decided not to move forward with your application file.`);
-
-        try { await targetUser.send({ embeds: [rejectEmbed] }); } catch {}
-
-        const logsChan = await client.channels.fetch(CONFIG.NOT_HIRED_CHANNEL_ID).catch(() => null);
-        if (logsChan) {
-            const visualAuditEmbed = new EmbedBuilder()
-                .setColor(COLORS.danger)
-                .setTitle('🔴 System Repository Compiling Archive')
-                .setDescription('`🔒 Compressing Application Session File Blocks`')
-                .addFields(
-                    { name: '👤 Candidate File', value: `${targetUser}\n(${targetUser.username})`, inline: true },
-                    { name: '🛠️ Target Role Rejected', value: `\`${role ? role.toUpperCase() : 'UNKNOWN'}\``, inline: true }
+                const actionRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`hire_${candidate.id}_${encodedRole}`).setLabel('Finalize Hire').setStyle(ButtonStyle.Success).setEmoji('✅'),
+                    new ButtonBuilder().setCustomId(`deny_${candidate.id}_${encodedRole}`).setLabel('Drop Candidate').setStyle(ButtonStyle.Danger).setEmoji('❌')
                 );
-            await logsChan.send({ embeds: [visualAuditEmbed] });
+
+                const thread = await forumChannel.threads.create({
+                    name: threadName,
+                    autoArchiveDuration: 1440,
+                    message: {
+                        content: `🎙️ **Session Node Online:** Terminal channel built for ${candidate}.`,
+                        embeds: [threadEmbed],
+                        components: [actionRow]
+                    }
+                });
+
+                SYSTEM_CACHE.totalInterviews++;
+                SYSTEM_CACHE.activeInterviews++;
+
+                try {
+                    const welcomeEmbed = new EmbedBuilder()
+                        .setColor(COLORS.info)
+                        .setAuthor({ name: 'Message from HR (Arya)', iconURL: client.user.displayAvatarURL() })
+                        .setDescription(`Hello **${candidate.displayName}**!\n\nI have successfully activated your secure interview communications line. My name is **Arya**, and I will be guiding you through today.\n\nYou can reply directly to this message block at any time!`);
+                    await candidate.send({ embeds: [welcomeEmbed] });
+                } catch {}
+
+                await interaction.editReply({ content: `✅ **Bridge Built for ${customRole.toUpperCase()}:** Access here: <#${thread.id}>` });
+            } catch (err) {
+                console.error(err);
+                await interaction.editReply({ content: '❌ **Error:** Failed to spin up the forum workspace thread.' });
+            }
+            return;
         }
 
-        await interaction.editReply({ content: '🏁 **Candidate denied. Session archived.**' });
-        await interaction.channel.setName(`[DENIED] ${targetUser.username}`);
-        await interaction.channel.setArchived(true);
+        // METRICS DASHBOARD
+        if (interaction.commandName === 'dashboard') {
+            const dashEmbed = new EmbedBuilder()
+                .setColor(COLORS.neutral)
+                .setTitle('🖥️ Operational Performance Analytics')
+                .setDescription('`📊 Live Network Diagnostics Log` ── Updates Active')
+                .addFields(
+                    { name: '📥 Active Message Channels', value: `\`▰▰▰▰▱▱▱▱▱▱ 40%\`\n» **${SYSTEM_CACHE.activeInterviews}** Active Sessions`, inline: true },
+                    { name: '📦 Cumulative Processed Logs', value: `\`▰▰▰▰▰▰▰▱▱▱ 70%\`\n» **${SYSTEM_CACHE.totalInterviews}** Total Streams`, inline: true }
+                );
+            return interaction.reply({ embeds: [dashEmbed] });
+        }
+
+        // STANDALONE MANUAL ONBOARD
+        if (interaction.commandName === 'onboard') {
+            const candidate = interaction.options.getUser('candidate');
+            const customRole = interaction.options.getString('role').trim();
+            const encodedRole = Buffer.from(customRole).toString('base64').replace(/=/g, '');
+
+            const modal = new ModalBuilder()
+                .setCustomId(`manualhiremodal_${candidate.id}_${encodedRole}`)
+                .setTitle('📝 Enter Performance Score');
+
+            const scoreInput = new TextInputBuilder()
+                .setCustomId('metrics_passrate')
+                .setLabel('Pass Rate (%)')
+                .setStyle(TextInputStyle.Short)
+                .setPlaceholder('e.g., 95%')
+                .setRequired(true);
+
+            modal.addComponents(new ActionRowBuilder().addComponents(scoreInput));
+            await interaction.showModal(modal);
+            return;
+        }
     }
 
-    if (action === 'hire') {
-        const encodedRole = Buffer.from(role).toString('base64').replace(/=/g, '');
-        const modal = new ModalBuilder()
-            .setCustomId(`hiremodal_${targetId}_${encodedRole}`)
-            .setTitle('📝 Enter Performance Score');
-
-        const scoreInput = new TextInputBuilder()
-            .setCustomId('metrics_passrate')
-            .setLabel('Pass Rate (%)')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('e.g., 94%')
-            .setRequired(true);
-
-        modal.addComponents(new ActionRowBuilder().addComponents(scoreInput));
-        await interaction.showModal(modal);
-    }
-});
-
-// ============================================
-//         MODAL HANDLING PROTOCOL
-// ============================================
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isModalSubmit()) return;
-
-    if (interaction.customId.startsWith('hiremodal_') || interaction.customId.startsWith('manualhiremodal_')) {
-        await interaction.deferReply();
-        const isManual = interaction.customId.startsWith('manualhiremodal_');
-        
+    // ----------------------------------------
+    // HANDLE PANEL INTERACTIVE BUTTONS
+    // ----------------------------------------
+    if (interaction.isButton()) {
         const parts = interaction.customId.split('_');
+        const action = parts[0];
         const targetId = parts[1];
         
         let role = '';
-        try {
-            role = Buffer.from(parts[2], 'base64').toString('utf8');
-        } catch {
-            role = parts[2];
+        if (parts[2]) {
+            try {
+                role = Buffer.from(parts[2], 'base64').toString('utf8');
+            } catch {
+                role = parts[2];
+            }
         }
 
-        const passRate = interaction.fields.getTextInputValue('metrics_passrate');
-        const generatedCode = generateSmallJobCode();
+        if (action === 'deny') {
+            await interaction.deferReply({ ephemeral: true });
+            let targetUser;
+            try { targetUser = await client.users.fetch(targetId); } catch { return; }
 
-        const cacheKey = isManual ? `manual_${interaction.id}` : interaction.channel.id;
+            if (SYSTEM_CACHE.activeInterviews > 0) SYSTEM_CACHE.activeInterviews--;
+            SYSTEM_CACHE.rejectedCount++;
 
-        SYSTEM_CACHE.pendingHires[cacheKey] = {
-            targetId,
-            role,
-            jobCode: generatedCode,
-            passRate,
-            hrAgent: interaction.user,
-            isManual: isManual,
-            channel: isManual ? null : interaction.channel
-        };
+            const rejectEmbed = new EmbedBuilder()
+                .setColor(COLORS.danger)
+                .setTitle('Certamen Studios — Application Status Update')
+                .setDescription(`Hello **${targetUser.displayName}**,\n\nThank you for taking the time to talk with us. Unfortunately, at this time we have decided not to move forward with your application file.`);
 
-        const routingEmbed = new EmbedBuilder()
-            .setColor(COLORS.warning)
-            .setTitle('💼 Select Assignment Manager')
-            .setDescription(`Metrics captured! (Job Code: \`${generatedCode}\`). Choose the designated project manager below to handle onboarding routing.`);
+            try { await targetUser.send({ embeds: [rejectEmbed] }); } catch {}
 
-        const managerSelect = new UserSelectMenuBuilder()
-            .setCustomId(`routepm_${cacheKey}`)
-            .setPlaceholder('Choose a manager...')
-            .setMinValues(1)
-            .setMaxValues(1);
+            const logsChan = await client.channels.fetch(CONFIG.NOT_HIRED_CHANNEL_ID).catch(() => null);
+            if (logsChan) {
+                const visualAuditEmbed = new EmbedBuilder()
+                    .setColor(COLORS.danger)
+                    .setTitle('🔴 System Repository Compiling Archive')
+                    .setDescription('`🔒 Compressing Application Session File Blocks`')
+                    .addFields(
+                        { name: '👤 Candidate File', value: `${targetUser}\n(${targetUser.username})`, inline: true },
+                        { name: '🛠️ Target Role Rejected', value: `\`${role ? role.toUpperCase() : 'UNKNOWN'}\``, inline: true }
+                    );
+                await logsChan.send({ embeds: [visualAuditEmbed] });
+            }
 
-        const row = new ActionRowBuilder().addComponents(managerSelect);
-        await interaction.editReply({ embeds: [routingEmbed], components: [row] });
+            await interaction.editReply({ content: '🏁 **Candidate denied. Session archived.**' });
+            await interaction.channel.setName(`[DENIED] ${targetUser.username}`);
+            await interaction.channel.setArchived(true);
+            return;
+        }
+
+        if (action === 'hire') {
+            const encodedRole = Buffer.from(role).toString('base64').replace(/=/g, '');
+            const modal = new ModalBuilder()
+                .setCustomId(`hiremodal_${targetId}_${encodedRole}`)
+                .setTitle('📝 Enter Performance Score');
+
+            const scoreInput = new TextInputBuilder()
+                .setCustomId('metrics_passrate')
+                .setLabel('Pass Rate (%)')
+                .setStyle(TextInputStyle.Short)
+                .setPlaceholder('e.g., 94%')
+                .setRequired(true);
+
+            modal.addComponents(new ActionRowBuilder().addComponents(scoreInput));
+            await interaction.showModal(modal);
+            return;
+        }
     }
-});
 
-// ============================================
-//         FINALIZE ROUTING ASSIGNMENT
-// ============================================
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isUserSelectMenu()) return;
+    // ----------------------------------------
+    // HANDLE MODAL FORM SUBMISSIONS
+    // ----------------------------------------
+    if (interaction.isModalSubmit()) {
+        if (interaction.customId.startsWith('hiremodal_') || interaction.customId.startsWith('manualhiremodal_')) {
+            await interaction.deferReply();
+            const isManual = interaction.customId.startsWith('manualhiremodal_');
+            
+            const parts = interaction.customId.split('_');
+            const targetId = parts[1];
+            
+            let role = '';
+            try {
+                role = Buffer.from(parts[2], 'base64').toString('utf8');
+            } catch {
+                role = parts[2];
+            }
 
-    if (interaction.customId.startsWith('routepm_')) {
-        await interaction.deferUpdate();
-        const cacheKey = interaction.customId.split('_')[1];
-        const selectedManager = interaction.users.first();
+            const passRate = interaction.fields.getTextInputValue('metrics_passrate');
+            const generatedCode = generateSmallJobCode();
 
-        const hireData = SYSTEM_CACHE.pendingHires[cacheKey];
-        if (!hireData) return;
+            const cacheKey = isManual ? `manual_${interaction.id}` : interaction.channel.id;
 
-        let targetUser;
-        try { targetUser = await client.users.fetch(hireData.targetId); } catch { return; }
+            SYSTEM_CACHE.pendingHires[cacheKey] = {
+                targetId,
+                role,
+                jobCode: generatedCode,
+                passRate,
+                hrAgent: interaction.user,
+                isManual: isManual,
+                channel: isManual ? null : interaction.channel
+            };
 
-        if (!hireData.isManual && SYSTEM_CACHE.activeInterviews > 0) {
-            SYSTEM_CACHE.activeInterviews--;
+            const routingEmbed = new EmbedBuilder()
+                .setColor(COLORS.warning)
+                .setTitle('💼 Select Assignment Manager')
+                .setDescription(`Metrics captured! (Job Code: \`${generatedCode}\`). Choose the designated project manager below to handle onboarding routing.`);
+
+            const managerSelect = new UserSelectMenuBuilder()
+                .setCustomId(`routepm_${cacheKey}`)
+                .setPlaceholder('Choose a manager...')
+                .setMinValues(1)
+                .setMaxValues(1);
+
+            const row = new ActionRowBuilder().addComponents(managerSelect);
+            await interaction.editReply({ embeds: [routingEmbed], components: [row] });
+            return;
         }
+    }
 
-        const fineAuditCardEmbed = new EmbedBuilder()
-            .setColor(COLORS.success)
-            .setTitle('🟢 Roster File Insertion Executed')
-            .setDescription('`⚡ Transferring operational system permissions cards...`')
-            .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
-            .addFields(
-                { name: '👤 Employed Talent', value: `${targetUser}\n(${targetUser.username})`, inline: true },
-                { name: '🛠️ Core Role', value: `\`${hireData.role.toUpperCase()}\``, inline: true },
-                { name: '🏷️ Assigned Code', value: `\`${hireData.jobCode}\``, inline: true },
-                { name: '📊 Matrix Output', value: `\`${hireData.passRate}\``, inline: true }
-            );
+    // ----------------------------------------
+    // HANDLE PROJECT MANAGER USER DROP MENUS
+    // ----------------------------------------
+    if (interaction.isUserSelectMenu()) {
+        if (interaction.customId.startsWith('routepm_')) {
+            await interaction.deferUpdate();
+            const cacheKey = interaction.customId.split('_')[1];
+            const selectedManager = interaction.users.first();
 
-        const logsChan = await client.channels.fetch(CONFIG.HIRED_CHANNEL_ID).catch(() => null);
-        if (logsChan) await logsChan.send({ embeds: [fineAuditCardEmbed] });
+            const hireData = SYSTEM_CACHE.pendingHires[cacheKey];
+            if (!hireData) return;
 
-        try { await selectedManager.send({ embeds: [fineAuditCardEmbed] }); } catch {}
+            let targetUser;
+            try { targetUser = await client.users.fetch(hireData.targetId); } catch { return; }
 
-        try {
-            const offerEmbed = new EmbedBuilder()
+            if (!hireData.isManual && SYSTEM_CACHE.activeInterviews > 0) {
+                SYSTEM_CACHE.activeInterviews--;
+            }
+
+            const fineAuditCardEmbed = new EmbedBuilder()
                 .setColor(COLORS.success)
-                .setTitle('🎉 Certamen Studios — Application Accepted!')
-                .setDescription(`Hello **${targetUser.displayName}**,\n\nWe are absolutely thrilled to inform you that you have been **ACCEPTED** into Certamen Studios for the position of **${hireData.role.toUpperCase()}**! A manager (<@${selectedManager.id}>) will reach out shortly.`);
-            await targetUser.send({ embeds: [offerEmbed] });
-        } catch {}
+                .setTitle('🟢 Roster File Insertion Executed')
+                .setDescription('`⚡ Transferring operational system permissions cards...`')
+                .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
+                .addFields(
+                    { name: '👤 Employed Talent', value: `${targetUser}\n(${targetUser.username})`, inline: true },
+                    { name: '🛠️ Core Role', value: `\`${hireData.role.toUpperCase()}\``, inline: true },
+                    { name: '🏷️ Assigned Code', value: `\`${hireData.jobCode}\``, inline: true },
+                    { name: '📊 Matrix Output', value: `\`${hireData.passRate}\``, inline: true }
+                );
 
-        if (!hireData.isManual && hireData.channel) {
-            await hireData.channel.send({ content: `🏁 **File finalized.** Job code generated [\`${hireData.jobCode}\`] and dispatched to manager.` });
-            await hireData.channel.setName(`[HIRED] ${targetUser.username}`);
-            await hireData.channel.setArchived(true);
+            const logsChan = await client.channels.fetch(CONFIG.HIRED_CHANNEL_ID).catch(() => null);
+            if (logsChan) await logsChan.send({ embeds: [fineAuditCardEmbed] });
+
+            try { await selectedManager.send({ embeds: [fineAuditCardEmbed] }); } catch {}
+
+            try {
+                const offerEmbed = new EmbedBuilder()
+                    .setColor(COLORS.success)
+                    .setTitle('🎉 Certamen Studios — Application Accepted!')
+                    .setDescription(`Hello **${targetUser.displayName}**,\n\nWe are absolutely thrilled to inform you that you have been **ACCEPTED** into Certamen Studios for the position of **${hireData.role.toUpperCase()}**! A manager (<@${selectedManager.id}>) will reach out shortly.`);
+                await targetUser.send({ embeds: [offerEmbed] });
+            } catch {}
+
+            if (!hireData.isManual && hireData.channel) {
+                await hireData.channel.send({ content: `🏁 **File finalized.** Job code generated [\`${hireData.jobCode}\`] and dispatched to manager.` });
+                await hireData.channel.setName(`[HIRED] ${targetUser.username}`);
+                await hireData.channel.setArchived(true);
+            }
+            
+            delete SYSTEM_CACHE.pendingHires[cacheKey];
+            await interaction.message.edit({ content: '📨 **Success:** Onboarding profile compiled and dispatched safely.', embeds: [], components: [] });
+            return;
         }
-        
-        delete SYSTEM_CACHE.pendingHires[cacheKey];
-        await interaction.message.edit({ content: '📨 **Success:** Onboarding profile compiled and dispatched safely.', embeds: [], components: [] });
     }
 });
 
